@@ -148,12 +148,17 @@ def generate_config(agent_config_path: str) -> dict:
     router_settings = {
         "num_retries": 3,
         "cooldown_time": 30,
-        "routing_strategy": "simple-shuffle"
+        "routing_strategy": "simple-shuffle",
+        "fallbacks": fallbacks
+    }
+
+    litellm_settings = {
+        "fallbacks": fallbacks
     }
     
     return {
         "model_list": model_list,
-        "fallbacks": fallbacks,
+        "litellm_settings": litellm_settings,
         "router_settings": router_settings
     }
 

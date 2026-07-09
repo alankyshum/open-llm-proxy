@@ -80,12 +80,19 @@ agents:
     config_dict = generate_config(str(config_file))
     
     assert "model_list" in config_dict
-    assert "fallbacks" in config_dict
+    assert "fallbacks" not in config_dict
+    assert "litellm_settings" in config_dict
     assert "router_settings" in config_dict
 
     model_list = config_dict["model_list"]
-    fallbacks = config_dict["fallbacks"]
+    litellm_settings = config_dict["litellm_settings"]
     router_settings = config_dict["router_settings"]
+
+    assert "fallbacks" in litellm_settings
+    assert "fallbacks" in router_settings
+    fallbacks_l = litellm_settings["fallbacks"]
+    fallbacks_r = router_settings["fallbacks"]
+    assert fallbacks_l == fallbacks_r
 
     # Verify chain-string alias is registered (semicolon-separated internal representation)
     chain_alias = "[claude-cli/claude-sonnet-5;github-copilot/claude-sonnet-5;openrouter/z-ai/glm-5.2]"
@@ -103,7 +110,7 @@ agents:
     assert any(d["model_name"] == t3 for d in model_list)
 
     # Verify fallbacks are registered for the chain
-    fallback_entry = next((f for f in fallbacks if chain_alias in f), None)
+    fallback_entry = next((f for f in fallbacks_l if chain_alias in f), None)
     assert fallback_entry is not None
     assert fallback_entry[chain_alias] == [t2, t3]
 
