@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from open_llm_proxy.config_gen import generate_config
 from open_llm_proxy.rate_limit_state import (
     PersistentRateLimitCallback,
     RateLimitStore,
@@ -113,6 +114,43 @@ async def test_plan_cooldown_is_persisted_and_filters_until_expiry(tmp_path):
     assert await callback.async_filter_deployments(
         "chain", [claude, copilot], None
     ) == [claude, copilot]
+
+
+@pytest.mark.anyio
+async def test_generated_chain_keeps_ordered_fallback_after_primary_cooldown(tmp_path):
+    config_path = tmp_path / "agent-config.yml"
+    config_path.write_text(
+        """
+file_settings:
+  opencode:
+    model: "open-llm-proxy/[google/gemini-3.5-flash,github-copilot/gemini-3.5-flash]"
+"""
+    )
+    config = generate_config(str(config_path))
+    alias = "[google/gemini-3.5-flash;github-copilot/gemini-3.5-flash]"
+    chain = [d for d in config["model_list"] if d["model_name"] == alias]
+    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    callback = PersistentRateLimitCallback(
+        database_path=tmp_path / "state.sqlite3",
+        configured_plans={"google": "free", "github-copilot": "unlimited"},
+        clock=lambda: now,
+    )
+
+    await callback.async_log_failure_event(
+        {
+            "exception": RateLimitedError(),
+            "litellm_params": {"model_info": chain[0]["model_info"]},
+        },
+        None,
+        None,
+        None,
+    )
+
+    available = await callback.async_filter_deployments(alias, chain, None)
+    assert [d["model_info"]["rate_limit_key"] for d in available] == [
+        "github-copilot/gemini-3.5-flash"
+    ]
+    assert available[0]["litellm_params"]["order"] == 2
 
 
 @pytest.mark.anyio

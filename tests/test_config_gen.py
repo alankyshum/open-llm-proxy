@@ -118,11 +118,18 @@ agents:
 
     # Verify chain-string alias is registered (semicolon-separated internal representation)
     chain_alias = "[claude-cli/claude-sonnet-5;github-copilot/claude-sonnet-5;openrouter/z-ai/glm-5.2]"
-    chain_deployment = next((d for d in model_list if d["model_name"] == chain_alias), None)
-    assert chain_deployment is not None
-    # Points to first token: claude-cli/claude-sonnet-5
-    assert chain_deployment["litellm_params"]["model"] == "claude-cli/claude-sonnet-5"
-    assert chain_deployment["model_info"]["rate_limit_key"] == "claude-cli/claude-sonnet-5"
+    chain_deployments = [d for d in model_list if d["model_name"] == chain_alias]
+    assert [d["litellm_params"]["model"] for d in chain_deployments] == [
+        "claude-cli/claude-sonnet-5",
+        "github-copilot/gh-claude-sonnet-5",
+        "openrouter/z-ai/glm-5.2",
+    ]
+    assert [d["litellm_params"]["order"] for d in chain_deployments] == [1, 2, 3]
+    assert [d["model_info"]["rate_limit_key"] for d in chain_deployments] == [
+        "claude-cli/claude-sonnet-5",
+        "github-copilot/claude-sonnet-5",
+        "openrouter/z-ai/glm-5.2",
+    ]
 
     # Verify individual tokens are registered as deployments
     t1 = "claude-cli/claude-sonnet-5"
@@ -168,4 +175,3 @@ file_settings:
     # Verify that the surfaced models are registered standalone
     assert any(d["model_name"] == "claude-cli/claude-opus-4-8" for d in model_list)
     assert any(d["model_name"] == "claude-cli/claude-sonnet-5" for d in model_list)
-

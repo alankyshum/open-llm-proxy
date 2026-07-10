@@ -166,11 +166,14 @@ def generate_config(agent_config_path: str) -> dict:
         is_bracketed = stripped_model.startswith("[") and stripped_model.endswith("]")
         if is_bracketed:
             internal_alias = stripped_model.replace(",", ";")
-            deployments[internal_alias] = {
-                "model_name": internal_alias,
-                "litellm_params": map_token_to_deployment_params(primary_token),
-                "model_info": {"rate_limit_key": primary_token},
-            }
+            for order, token in enumerate(tokens, start=1):
+                params = map_token_to_deployment_params(token)
+                params["order"] = order
+                deployments[f"{internal_alias}::{order}"] = {
+                    "model_name": internal_alias,
+                    "litellm_params": params,
+                    "model_info": {"rate_limit_key": token},
+                }
             if len(tokens) > 1:
                 # Add fallbacks mapping
                 fallbacks.append({
