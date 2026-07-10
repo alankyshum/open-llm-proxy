@@ -70,12 +70,21 @@ class GeminiThinkingBudgetCallback(CustomLogger):
             ("google/",             1024, "KILO_PROXY_GOOGLE_MIN_MAX_TOKENS"),
             ("deepseek-v4-flash-free",  4096, None),
             ("nemotron-3-ultra-free",   4096, None),
+            ("gpt-5.5",                 4096, None),
+            ("big-pickle",              4096, None),
         ]
 
-    async def async_pre_request_hook(
-        self, model: str, messages: List, kwargs: Dict
-    ) -> Optional[Dict]:
-        model_lower = model.lower()
+    async def async_pre_call_hook(
+        self,
+        user_api_key_dict: Any,
+        cache: Any,
+        data: dict,
+        call_type: str,
+    ) -> Optional[dict]:
+        model = data.get("model", "")
+        model_lower = model.lower() if isinstance(model, str) else ""
+        max_tokens = data.get("max_tokens")
+
         for pattern, default_floor, env_key in self._rules:
             if pattern not in model_lower:
                 continue
@@ -88,16 +97,20 @@ class GeminiThinkingBudgetCallback(CustomLogger):
                     pass
 
             if floor > 0:
-                mt = kwargs.get("max_tokens")
-                if isinstance(mt, int) and not isinstance(mt, bool) and mt < floor:
+                if max_tokens is None or (
+                    isinstance(max_tokens, int)
+                    and not isinstance(max_tokens, bool)
+                    and max_tokens < floor
+                ):
                     log.info(
-                        "GeminiThinkingBudgetCallback: raising max_tokens %d -> %d "
+                        "GeminiThinkingBudgetCallback: raising max_tokens %s -> %d "
                         "to preserve thinking budget for %s",
-                        mt, floor, model,
+                        max_tokens, floor, model,
                     )
-                    kwargs["max_tokens"] = floor
-                    return kwargs
+                    data["max_tokens"] = floor
+                    return data
             break  # first matching rule wins
+
         return None
 
 
@@ -110,13 +123,17 @@ class TaskToolEnumInjectionCallback(CustomLogger):
         super().__init__()
         self.enabled = enabled
 
-    async def async_pre_request_hook(
-        self, model: str, messages: List, kwargs: Dict
-    ) -> Optional[Dict]:
+    async def async_pre_call_hook(
+        self,
+        user_api_key_dict: Any,
+        cache: Any,
+        data: dict,
+        call_type: str,
+    ) -> Optional[dict]:
         if not self.enabled:
             return None
-            
-        tools = kwargs.get("tools")
+
+        tools = data.get("tools")
         if isinstance(tools, list) and tools:
             copied_tools = copy.deepcopy(tools)
             rewrote = False
@@ -124,8 +141,8 @@ class TaskToolEnumInjectionCallback(CustomLogger):
                 if isinstance(t, dict) and _rewrite_task_tool(t):
                     rewrote = True
             if rewrote:
-                kwargs["tools"] = copied_tools
-                return kwargs
+                data["tools"] = copied_tools
+                return data
         return None
 
 
