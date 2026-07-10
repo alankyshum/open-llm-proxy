@@ -166,8 +166,8 @@ async def test_get_copilot_token_expired_access_goes_to_exchange(monkeypatch, is
 
 
 @pytest.mark.anyio
-async def test_get_copilot_token_404_raises_clear_error(monkeypatch, isolated_auth_path):
-    """Token exchange 404 raises CopilotAuthError with scope hint."""
+async def test_get_copilot_token_404_falls_back_to_direct(monkeypatch, isolated_auth_path):
+    """Token exchange 404 falls back to using raw OAuth token directly (no raise)."""
     monkeypatch.delenv("COPILOT_OAUTH_TOKEN", raising=False)
     fake_data = {
         "refresh": "gho_no_copilot_scope",
@@ -180,10 +180,9 @@ async def test_get_copilot_token_404_raises_clear_error(monkeypatch, isolated_au
 
     with patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data), \
          patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
-        with pytest.raises(copilot_creds.CopilotAuthError) as exc_info:
-            await copilot_creds.get_copilot_token()
-        assert "copilot" in str(exc_info.value).lower()
-        assert "scope" in str(exc_info.value).lower()
+        token, api_url = await copilot_creds.get_copilot_token()
+        assert token == "gho_no_copilot_scope"  # falls back to raw token
+        assert api_url == "https://api.githubcopilot.com"
         mock_get.assert_called_once()
 
 
@@ -225,7 +224,7 @@ async def test_get_copilot_token_writes_back_to_auth_json(monkeypatch, isolated_
 
 @pytest.mark.anyio
 async def test_get_copilot_token_degenerate_state(monkeypatch, isolated_auth_path):
-    """access==refresh (both gho_) with expires=0: error still propagates clearly."""
+    """access==refresh (both gho_) with expires=0: exchange fails → falls back to direct token."""
     monkeypatch.delenv("COPILOT_OAUTH_TOKEN", raising=False)
     fake_data = {
         "refresh": "gho_degenerate",
@@ -238,5 +237,18 @@ async def test_get_copilot_token_degenerate_state(monkeypatch, isolated_auth_pat
 
     with patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data), \
          patch("httpx.AsyncClient.get", return_value=mock_response):
-        with pytest.raises(copilot_creds.CopilotAuthError):
-            await copilot_creds.get_copilot_token()
+        token, api_url = await copilot_creds.get_copilot_token()
+        assert token == "gho_degenerate"
+        assert api_url == "https://api.githubcopilot.com"
+
+
+@pytest.mark.anyio
+async def test_get_copilot_token_no_token_raises(monkeypatch, isolated_auth_path):
+    """No token at all → CopilotAuthError."""
+    monkeypatch.delenv("COPILOT_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr(copilot_creds, "_read_opencode_auth_data", lambda: None)
+    monkeypatch.setattr(copilot_creds, "_read_fallback_file", lambda: None)
+    monkeypatch.setattr(copilot_creds, "_read_keychain_macos", lambda: None)
+    monkeypatch.setattr(copilot_creds, "_read_secret_tool_linux", lambda: None)
+    with pytest.raises(copilot_creds.CopilotAuthError, match="No Copilot OAuth token found"):
+        await copilot_creds.get_copilot_token()

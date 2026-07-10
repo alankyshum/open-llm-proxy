@@ -49,7 +49,7 @@ def map_token_to_deployment_params(token: str) -> dict:
         }
     elif provider == "github-copilot":
         return {
-            "model": f"github-copilot/{rest}",
+            "model": f"github-copilot/gh-{rest}",
             "custom_llm_provider": "github-copilot",
             "api_key": "not-needed",
         }

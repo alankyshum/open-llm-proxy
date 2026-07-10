@@ -294,10 +294,18 @@ class GithubCopilotLLM(CustomLLM):
             self._clients_by_loop[loop] = httpx.AsyncClient(limits=limits, timeout=timeout, http2=False)
         return self._clients_by_loop[loop]
 
+    @staticmethod
+    def _strip_model_prefix(model: str) -> str:
+        """Strip github-copilot/ and gh- prefix from model name."""
+        s = model
+        if s.startswith("github-copilot/"):
+            s = s[len("github-copilot/"):]
+        if s.startswith("gh-"):
+            s = s[len("gh-"):]
+        return s
+
     async def get_endpoint_for_model(self, model: str) -> str:
-        model_str = model
-        if model_str.startswith("github-copilot/"):
-            model_str = model_str[len("github-copilot/"):]
+        model_str = self._strip_model_prefix(model)
 
         now = time.monotonic()
         if self._endpoint_cache and (now - self._endpoint_cache[0]) < self._endpoint_ttl:
@@ -393,9 +401,7 @@ class GithubCopilotLLM(CustomLLM):
         max_tokens = kwargs.get("max_tokens") or optional_params.get("max_tokens")
         temperature = kwargs.get("temperature") or optional_params.get("temperature")
 
-        model_str = model
-        if model_str.startswith("github-copilot/"):
-            model_str = model_str[len("github-copilot/"):]
+        model_str = self._strip_model_prefix(model)
 
         try:
             token, base_url = await copilot_creds.get_copilot_token()
@@ -562,9 +568,7 @@ class GithubCopilotLLM(CustomLLM):
         max_tokens = kwargs.get("max_tokens") or optional_params.get("max_tokens")
         temperature = kwargs.get("temperature") or optional_params.get("temperature")
 
-        model_str = model
-        if model_str.startswith("github-copilot/"):
-            model_str = model_str[len("github-copilot/"):]
+        model_str = self._strip_model_prefix(model)
 
         try:
             token, base_url = await copilot_creds.get_copilot_token()

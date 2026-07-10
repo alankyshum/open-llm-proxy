@@ -306,12 +306,27 @@ async def get_copilot_token() -> tuple[str, str]:
             endpoints_api="https://api.githubcopilot.com",
         )
     else:
-        fresh = await _fetch_short_lived(oauth)
-        # Persist the exchanged session token back to auth.json
-        if copilot_data is not None:
-            copilot_data["access"] = fresh.token
-            copilot_data["expires"] = fresh.expires_at
-            _write_opencode_auth_back(copilot_data)
+        try:
+            fresh = await _fetch_short_lived(oauth)
+            # Persist the exchanged session token back to auth.json
+            if copilot_data is not None:
+                copilot_data["access"] = fresh.token
+                copilot_data["expires"] = fresh.expires_at
+                _write_opencode_auth_back(copilot_data)
+        except (CopilotAuthError, Exception) as e:
+            # Exchange failed (e.g. 404 for opencode's OAuth tokens which lack
+            # the copilot_internal/v2 scope). Fall back to using the raw OAuth
+            # token directly against api.githubcopilot.com — GitHub Copilot
+            # endpoints accept raw gho_/ghu_ tokens directly.
+            if isinstance(e, CopilotAuthError):
+                log.warning("copilot: token exchange failed, falling back to direct OAuth token")
+            else:
+                log.warning("copilot: token exchange error (%s), falling back to direct OAuth token", e)
+            fresh = _ShortLived(
+                token=oauth,
+                expires_at=now + 3600,
+                endpoints_api="https://api.githubcopilot.com",
+            )
 
     with _short_lived_lock:
         _short_lived = fresh
