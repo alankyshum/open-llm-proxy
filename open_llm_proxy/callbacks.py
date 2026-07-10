@@ -59,34 +59,45 @@ def _rewrite_task_tool(tool: dict[str, Any]) -> bool:
 
 class GeminiThinkingBudgetCallback(CustomLogger):
     """
-    Callback that floors max_tokens to 1024 for Gemini thinking models.
+    Callback that floors max_tokens for models whose hidden reasoning tokens
+    can consume the entire token budget, producing empty completions.
     """
     def __init__(self) -> None:
         super().__init__()
+        # Each rule: (model_substring, default_floor, env_override_key_or_None)
+        self._rules: list[tuple[str, int, str | None]] = [
+            ("gemini",              1024, "KILO_PROXY_GOOGLE_MIN_MAX_TOKENS"),
+            ("google/",             1024, "KILO_PROXY_GOOGLE_MIN_MAX_TOKENS"),
+            ("deepseek-v4-flash-free",  4096, None),
+            ("nemotron-3-ultra-free",   4096, None),
+        ]
 
     async def async_pre_request_hook(
         self, model: str, messages: List, kwargs: Dict
     ) -> Optional[Dict]:
         model_lower = model.lower()
-        # Apply to gemini models
-        if "gemini" in model_lower or model_lower.startswith("google/"):
-            raw_floor = os.environ.get("KILO_PROXY_GOOGLE_MIN_MAX_TOKENS")
-            floor = 1024
+        for pattern, default_floor, env_key in self._rules:
+            if pattern not in model_lower:
+                continue
+            raw_floor = os.environ.get(env_key) if env_key is not None else None
+            floor = default_floor
             if raw_floor is not None:
                 try:
                     floor = max(0, min(int(raw_floor), 128_000))
                 except (TypeError, ValueError):
                     pass
-            
+
             if floor > 0:
                 mt = kwargs.get("max_tokens")
                 if isinstance(mt, int) and not isinstance(mt, bool) and mt < floor:
                     log.info(
-                        "GeminiThinkingBudgetCallback: raising max_tokens %d -> %d to preserve thinking budget",
-                        mt, floor
+                        "GeminiThinkingBudgetCallback: raising max_tokens %d -> %d "
+                        "to preserve thinking budget for %s",
+                        mt, floor, model,
                     )
                     kwargs["max_tokens"] = floor
                     return kwargs
+            break  # first matching rule wins
         return None
 
 

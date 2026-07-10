@@ -25,6 +25,42 @@ async def test_gemini_thinking_budget_callback():
     assert res_non_gemini is None
 
 @pytest.mark.anyio
+async def test_deepseek_thinking_budget_callback():
+    callback = GeminiThinkingBudgetCallback()
+
+    # deepseek-v4-flash-free with small max_tokens -> raise to 4096
+    kwargs = {"max_tokens": 64}
+    res = await callback.async_pre_request_hook("opencode/deepseek-v4-flash-free", [], kwargs)
+    assert res is not None
+    assert res["max_tokens"] == 4096
+
+    # Already above floor -> no change
+    kwargs_large = {"max_tokens": 8192}
+    res_large = await callback.async_pre_request_hook("opencode/deepseek-v4-flash-free", [], kwargs_large)
+    assert res_large is None
+
+    # openai/ prefix variant
+    kwargs_openai = {"max_tokens": 100}
+    res_openai = await callback.async_pre_request_hook("openai/deepseek-v4-flash-free", [], kwargs_openai)
+    assert res_openai is not None
+    assert res_openai["max_tokens"] == 4096
+
+@pytest.mark.anyio
+async def test_nemotron_thinking_budget_callback():
+    callback = GeminiThinkingBudgetCallback()
+
+    # nemotron-3-ultra-free with small max_tokens -> raise to 4096
+    kwargs = {"max_tokens": 64}
+    res = await callback.async_pre_request_hook("opencode/nemotron-3-ultra-free", [], kwargs)
+    assert res is not None
+    assert res["max_tokens"] == 4096
+
+    # Already above floor -> no change
+    kwargs_large = {"max_tokens": 8192}
+    res_large = await callback.async_pre_request_hook("opencode/nemotron-3-ultra-free", [], kwargs_large)
+    assert res_large is None
+
+@pytest.mark.anyio
 async def test_task_tool_enum_injection_callback():
     # disabled by default
     callback_disabled = TaskToolEnumInjectionCallback(enabled=False)
