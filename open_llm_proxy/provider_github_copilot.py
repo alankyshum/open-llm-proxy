@@ -399,8 +399,10 @@ class GithubCopilotLLM(CustomLLM):
 
         try:
             token, base_url = await copilot_creds.get_copilot_token()
+        except copilot_creds.CopilotAuthError:
+            raise  # No status_code → litellm treats as retriable → triggers fallback
         except Exception as e:
-            raise CustomLLMError(status_code=401, message=f"Copilot auth failed: {e}")
+            raise CustomLLMError(status_code=500, message=f"Copilot auth error: {e}")
 
         endpoint = await self.get_endpoint_for_model(model_str)
 
@@ -444,6 +446,8 @@ class GithubCopilotLLM(CustomLLM):
                 if resp.status_code == 429:
                     raise CustomLLMError(status_code=429, message="Rate limited")
                 return resp
+            except copilot_creds.CopilotAuthError:
+                raise  # Let auth errors bubble up without 4xx status
             except CustomLLMError:
                 raise
             except Exception as exc:
@@ -564,8 +568,10 @@ class GithubCopilotLLM(CustomLLM):
 
         try:
             token, base_url = await copilot_creds.get_copilot_token()
+        except copilot_creds.CopilotAuthError:
+            raise  # No status_code → litellm treats as retriable → triggers fallback
         except Exception as e:
-            raise CustomLLMError(status_code=401, message=f"Copilot auth failed: {e}")
+            raise CustomLLMError(status_code=500, message=f"Copilot auth error: {e}")
 
         endpoint = await self.get_endpoint_for_model(model_str)
 
@@ -609,6 +615,8 @@ class GithubCopilotLLM(CustomLLM):
                 if resp.status_code == 429:
                     raise CustomLLMError(status_code=429, message="Rate limited")
                 return resp
+            except copilot_creds.CopilotAuthError:
+                raise  # Let auth errors bubble up without 4xx status
             except CustomLLMError:
                 raise
             except Exception as exc:

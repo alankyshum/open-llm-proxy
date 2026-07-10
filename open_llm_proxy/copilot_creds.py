@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -91,12 +92,15 @@ def _read_fallback_file() -> Optional[str]:
     return tok if isinstance(tok, str) and tok else None
 
 
-def _read_opencode_auth_data() -> Optional[dict]:
+def _get_opencode_auth_path() -> Path:
     path_str = os.environ.get("OPENCODE_AUTH_PATH")
     if path_str:
-        path = Path(path_str)
-    else:
-        path = Path.home() / ".local" / "share" / "opencode" / "auth.json"
+        return Path(path_str)
+    return Path.home() / ".local" / "share" / "opencode" / "auth.json"
+
+
+def _read_opencode_auth_data() -> Optional[dict]:
+    path = _get_opencode_auth_path()
     if not path.is_file():
         return None
     try:
@@ -163,6 +167,25 @@ def get_oauth_token() -> str:
         )
 
 
+def _write_opencode_auth_back(copilot_entry: dict) -> None:
+    """Atomically write the github-copilot entry back to auth.json (mode 0600)."""
+    path = _get_opencode_auth_path()
+    try:
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        data["github-copilot"] = copilot_entry
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        tmp.chmod(0o600)
+        tmp.rename(path)
+    except Exception as e:
+        log.warning("copilot: failed to write refreshed token back to auth.json: %s", e)
+
+
 @dataclass
 class _ShortLived:
     token: str
@@ -187,7 +210,9 @@ def _exchange_token_headers(oauth: str) -> dict[str, str]:
         "User-Agent": USER_AGENT,
         "Editor-Version": EDITOR_VERSION,
         "Editor-Plugin-Version": EDITOR_PLUGIN_VERSION,
+        "Copilot-Integration-Id": COPILOT_INTEGRATION_ID,
         "X-GitHub-Api-Version": X_GITHUB_API_VERSION,
+        "X-Request-Id": str(uuid.uuid4()),
     }
 
 
@@ -200,6 +225,11 @@ async def _fetch_short_lived(oauth: str) -> _ShortLived:
         clear_oauth_cache()
         raise CopilotAuthError(
             "GitHub returned 401 from /copilot_internal/v2/token — stored OAuth token is invalid or revoked."
+        )
+    if r.status_code == 404:
+        raise CopilotAuthError(
+            "GitHub returned 404 from /copilot_internal/v2/token — stored OAuth token lacks the required 'copilot' scope. "
+            "Regenerate the token by running a Copilot task in opencode or re-authenticating."
         )
     if r.status_code != 200:
         raise CopilotAuthError(
@@ -238,7 +268,16 @@ async def get_copilot_token() -> tuple[str, str]:
                 else:
                     expires_sec = expires_val
 
-                if (expires_sec - now) > 60:
+                # Skip degenerate/zero expires (was never properly set)
+                if expires_sec <= 0:
+                    log.debug("copilot: access token expires == 0 (unset), skipping")
+                # Skip gho_/ghu_ tokens — they are OAuth tokens, not session tokens
+                elif access.startswith("gho_") or access.startswith("ghu_"):
+                    log.debug(
+                        "copilot: access token starts with gho_/ghu_ (OAuth token, not session), skipping"
+                    )
+                # Allow small negative skew (up to 30s) to handle clock differences
+                elif (expires_sec - now) > -30:
                     fresh = _ShortLived(
                         token=access,
                         expires_at=int(expires_sec),
@@ -251,6 +290,11 @@ async def get_copilot_token() -> tuple[str, str]:
                         fresh.expires_at,
                     )
                     return fresh.token, fresh.endpoints_api
+                else:
+                    log.debug(
+                        "copilot: access token expired (%d < %d)",
+                        int(expires_sec), int(now),
+                    )
             except Exception as e:
                 log.debug("Failed parsing opencode auth expires: %s", e)
 
@@ -263,6 +307,11 @@ async def get_copilot_token() -> tuple[str, str]:
         )
     else:
         fresh = await _fetch_short_lived(oauth)
+        # Persist the exchanged session token back to auth.json
+        if copilot_data is not None:
+            copilot_data["access"] = fresh.token
+            copilot_data["expires"] = fresh.expires_at
+            _write_opencode_auth_back(copilot_data)
 
     with _short_lived_lock:
         _short_lived = fresh

@@ -50,7 +50,8 @@ def map_token_to_deployment_params(token: str) -> dict:
     elif provider == "github-copilot":
         return {
             "model": f"github-copilot/{rest}",
-            "api_key": "sk-copilot-local"
+            "custom_llm_provider": "github-copilot",
+            "api_key": "not-needed",
         }
     elif provider == "openrouter":
         return {
