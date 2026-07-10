@@ -1,6 +1,22 @@
 # open-llm-proxy
 Lightweight litellm Router proxy
 
+## CLI
+
+Installing the package exposes the `open-llm-proxy` command:
+
+```bash
+open-llm-proxy serve --host 127.0.0.1 --port 8765
+open-llm-proxy setup --config ~/.config/kilo-claude-proxy/agent-config.yml
+open-llm-proxy config --format yaml
+open-llm-proxy help serve
+```
+
+Run `open-llm-proxy help` to dynamically list available commands, or
+`open-llm-proxy help <command>` to show that command's current options.
+`--help` remains available at every level. The legacy
+`python -m open_llm_proxy.*` entry points remain available.
+
 ## Provider rate-limit setup
 
 Run setup after installing the proxy:

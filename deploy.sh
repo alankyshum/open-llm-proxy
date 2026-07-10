@@ -6,6 +6,8 @@ DOTFILES_ROOT="$(cd "$SUBMODULE_DIR/../.." && pwd)"
 RUNTIME_DIR="${KILO_PROXY_RUNTIME_DIR:-$HOME/.local/share/kilo-claude-proxy}"
 CONFIG_DEST_DIR="${KILO_PROXY_CONFIG_DIR:-$HOME/.config/kilo-claude-proxy}"
 AGENT_CONFIG_SRC="${KILO_PROXY_AGENT_CONFIG:-$DOTFILES_ROOT/config/agent-runtime/agent-config.yml}"
+BIN_DIR="$RUNTIME_DIR/bin"
+LOCAL_BIN_LINK="${HOME}/.local/bin/open-llm-proxy"
 
 echo "=== Deploying open-llm-proxy submodule -> runtime ==="
 
@@ -45,6 +47,13 @@ else
   python3 -m venv "$RUNTIME_DIR/.venv"
   "$RUNTIME_DIR/.venv/bin/pip" install -q --disable-pip-version-check "$RUNTIME_DIR"
 fi
+mkdir -p "$BIN_DIR"
+ln -snf "$RUNTIME_DIR/.venv/bin/open-llm-proxy" "$BIN_DIR/open-llm-proxy"
+if [ -e "$LOCAL_BIN_LINK" ] && [ ! -L "$LOCAL_BIN_LINK" ]; then
+  echo "${LOCAL_BIN_LINK} exists and is not a symlink; refusing to overwrite" >&2
+  exit 1
+fi
+ln -snf "$BIN_DIR/open-llm-proxy" "$LOCAL_BIN_LINK"
 
 # 6. Ask for provider plans on first setup and initialize the SQLite policy cache.
 echo "Configuring provider rate-limit plans..."
