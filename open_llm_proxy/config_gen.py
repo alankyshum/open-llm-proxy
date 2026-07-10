@@ -5,6 +5,16 @@ import sys
 from pathlib import Path
 import yaml
 
+# Import the catalog from translator to validate surfaced models
+try:
+    from open_llm_proxy.translator import _MODEL_CATALOG
+    _CATALOG_IDS = {m["id"] for m in _MODEL_CATALOG}
+except ImportError:
+    _CATALOG_IDS = {
+        "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5",
+        "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"
+    }
+
 def parse_fallback_chain(model_str: str) -> list[str]:
     if not isinstance(model_str, str):
         raise ValueError("model_str must be a string")
@@ -44,6 +54,9 @@ def map_token_to_deployment_params(token: str) -> dict:
     provider, rest = token.split("/", 1)
     
     if provider == "claude-cli":
+        base_model_id = rest.split(":")[0] if ":" in rest else rest
+        if base_model_id not in _CATALOG_IDS:
+            raise ValueError(f"Invalid claude-cli model ID: {base_model_id}")
         return {
             "model": f"claude-cli/{rest}"
         }
@@ -77,10 +90,11 @@ def map_token_to_deployment_params(token: str) -> dict:
             "model": token
         }
 
-def generate_config(agent_config_path: str) -> dict:
-    with open(agent_config_path, "r") as f:
-        data = yaml.safe_load(f) or {}
-    
+
+def configured_model_tokens(agent_config_path: str | Path) -> set[str]:
+    with open(agent_config_path) as config_file:
+        data = yaml.safe_load(config_file) or {}
+
     model_strings = set()
     
     # Extract file_settings model strings
@@ -92,6 +106,14 @@ def generate_config(agent_config_path: str) -> dict:
                 model_strings.add(opencode_settings["model"])
             if "small_model" in opencode_settings:
                 model_strings.add(opencode_settings["small_model"])
+            # Extract surfaced_models
+            surfaced_models = opencode_settings.get("surfaced_models", [])
+            if isinstance(surfaced_models, list):
+                for m in surfaced_models:
+                    if isinstance(m, str):
+                        # Surfaced models are bare tokens like "claude-cli/claude-sonnet-5"
+                        # We need to wrap them as if they were plain models
+                        model_strings.add(f"open-llm-proxy/{m}")
     
     # Extract agents model strings
     agents = data.get("agents", {})
@@ -99,7 +121,32 @@ def generate_config(agent_config_path: str) -> dict:
         for agent_name, agent_cfg in agents.items():
             if isinstance(agent_cfg, dict) and "model" in agent_cfg:
                 model_strings.add(agent_cfg["model"])
-                
+
+    tokens: set[str] = set()
+    for raw_model in model_strings:
+        tokens.update(parse_fallback_chain(raw_model))
+    return tokens
+
+
+def generate_config(agent_config_path: str) -> dict:
+    with open(agent_config_path) as config_file:
+        data = yaml.safe_load(config_file) or {}
+
+    model_strings = set()
+    file_settings = data.get("file_settings", {})
+    if isinstance(file_settings, dict):
+        opencode_settings = file_settings.get("opencode", {})
+        if isinstance(opencode_settings, dict):
+            for key in ("model", "small_model"):
+                if key in opencode_settings:
+                    model_strings.add(opencode_settings[key])
+            for model in opencode_settings.get("surfaced_models", []):
+                if isinstance(model, str):
+                    model_strings.add(f"open-llm-proxy/{model}")
+    for agent_cfg in (data.get("agents") or {}).values():
+        if isinstance(agent_cfg, dict) and "model" in agent_cfg:
+            model_strings.add(agent_cfg["model"])
+
     deployments = {}
     fallbacks = []
     
@@ -121,7 +168,8 @@ def generate_config(agent_config_path: str) -> dict:
             internal_alias = stripped_model.replace(",", ";")
             deployments[internal_alias] = {
                 "model_name": internal_alias,
-                "litellm_params": map_token_to_deployment_params(primary_token)
+                "litellm_params": map_token_to_deployment_params(primary_token),
+                "model_info": {"rate_limit_key": primary_token},
             }
             if len(tokens) > 1:
                 # Add fallbacks mapping
@@ -132,7 +180,8 @@ def generate_config(agent_config_path: str) -> dict:
             # Plain model, just register the plain model deployment
             deployments[stripped_model] = {
                 "model_name": stripped_model,
-                "litellm_params": map_token_to_deployment_params(primary_token)
+                "litellm_params": map_token_to_deployment_params(primary_token),
+                "model_info": {"rate_limit_key": primary_token},
             }
             
         # Register every token as its own deployment
@@ -140,21 +189,28 @@ def generate_config(agent_config_path: str) -> dict:
             if token not in deployments:
                 deployments[token] = {
                     "model_name": token,
-                    "litellm_params": map_token_to_deployment_params(token)
+                    "litellm_params": map_token_to_deployment_params(token),
+                    "model_info": {"rate_limit_key": token},
                 }
                 
+        # Register surfaced models that are bare tokens (not in chains)
+        # These come from surfaced_models list as bare tokens like "claude-cli/claude-sonnet-5"
+        # They don't have open-llm-proxy/ prefix because they come from surfaced_models list directly
+        # But since we added "open-llm-proxy/{m}" to model_strings, they've already been processed above
+
     # Sort deployments by model_name for deterministic output
     model_list = [deployments[k] for k in sorted(deployments.keys())]
-    
+
     router_settings = {
-        "num_retries": 3,
-        "cooldown_time": 30,
+        "num_retries": 0,
+        "disable_cooldowns": False,
         "routing_strategy": "simple-shuffle",
         "fallbacks": fallbacks
     }
 
     litellm_settings = {
-        "fallbacks": fallbacks
+        "fallbacks": fallbacks,
+        "drop_params": True,
     }
     
     return {

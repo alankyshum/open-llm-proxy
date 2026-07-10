@@ -75,6 +75,7 @@ async def test_claude_cli_rate_limit_error_mapping():
                 pass
         assert exc_info.value.status_code == 429
         assert "Mocked Rate Limit" in exc_info.value.message
+        assert exc_info.value.retry_after == 5
 
 
 @pytest.mark.anyio

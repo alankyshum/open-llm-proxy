@@ -13,6 +13,7 @@ from litellm.llms.custom_llm import CustomLLM, CustomLLMError
 from litellm.types.utils import GenericStreamingChunk, ModelResponse
 
 from open_llm_proxy import copilot_creds
+from open_llm_proxy.errors import custom_rate_limit_error
 
 log = logging.getLogger("open_llm_proxy.provider_github_copilot")
 
@@ -450,7 +451,9 @@ class GithubCopilotLLM(CustomLLM):
                     headers["Authorization"] = f"Bearer {new_token}"
                     resp = await req_func()
                 if resp.status_code == 429:
-                    raise CustomLLMError(status_code=429, message="Rate limited")
+                    raise custom_rate_limit_error(
+                        "Rate limited", headers=dict(resp.headers)
+                    )
                 return resp
             except copilot_creds.CopilotAuthError:
                 raise  # Let auth errors bubble up without 4xx status
@@ -617,7 +620,9 @@ class GithubCopilotLLM(CustomLLM):
                     headers["Authorization"] = f"Bearer {new_token}"
                     resp = await req_func()
                 if resp.status_code == 429:
-                    raise CustomLLMError(status_code=429, message="Rate limited")
+                    raise custom_rate_limit_error(
+                        "Rate limited", headers=dict(resp.headers)
+                    )
                 return resp
             except copilot_creds.CopilotAuthError:
                 raise  # Let auth errors bubble up without 4xx status

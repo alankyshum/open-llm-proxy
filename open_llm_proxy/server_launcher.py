@@ -11,18 +11,31 @@ from pathlib import Path
 print("SERVER_LAUNCHER: Importing litellm...", flush=True)
 import litellm
 print("SERVER_LAUNCHER: Importing open_llm_proxy callbacks/config...", flush=True)
-from open_llm_proxy.callbacks import GeminiThinkingBudgetCallback, FallbackChainCommaRewriterCallback
-from open_llm_proxy.config_gen import generate_config
+from open_llm_proxy.callbacks import (
+    FallbackChainCommaRewriterCallback,
+    GeminiThinkingBudgetCallback,
+)
+from open_llm_proxy.config_gen import configured_model_tokens, generate_config
+from open_llm_proxy.rate_limit_state import (
+    PersistentRateLimitCallback,
+    load_rate_limit_policy,
+)
 print("SERVER_LAUNCHER: All imports done.", flush=True)
 
 log = logging.getLogger("open_llm_proxy.server_launcher")
 
-def setup_callbacks():
-    """
-    Registers the required gemini thinking budget and fallback chain comma rewriter callbacks.
-    """
+def setup_callbacks(config_path: str | Path | None = None):
+    """Register request transforms and persistent rate-limit tracking."""
     if not hasattr(litellm, "callbacks") or litellm.callbacks is None:
         litellm.callbacks = []
+
+    if config_path is not None and not any(
+        isinstance(c, PersistentRateLimitCallback) for c in litellm.callbacks
+    ):
+        policy = load_rate_limit_policy(config_path)
+        policy["model_keys"] = configured_model_tokens(config_path)
+        litellm.callbacks.append(PersistentRateLimitCallback(**policy))
+        log.info("PersistentRateLimitCallback registered.")
     
     # Register Gemini thinking budget callback
     if not any(isinstance(c, GeminiThinkingBudgetCallback) for c in litellm.callbacks):
@@ -31,7 +44,9 @@ def setup_callbacks():
         log.info("GeminiThinkingBudgetCallback registered.")
 
     # Register Fallback chain comma rewriter callback
-    if not any(isinstance(c, FallbackChainCommaRewriterCallback) for c in litellm.callbacks):
+    if not any(
+        isinstance(c, FallbackChainCommaRewriterCallback) for c in litellm.callbacks
+    ):
         rewriter_callback = FallbackChainCommaRewriterCallback()
         litellm.callbacks.append(rewriter_callback)
         log.info("FallbackChainCommaRewriterCallback registered.")
@@ -60,14 +75,18 @@ def launch_server(host: str = "0.0.0.0", port: int = 8765):
     """
     Launches the programmatic LiteLLM proxy server on the specified port.
     """
-    print("SERVER_LAUNCHER: Calling setup_callbacks()...", flush=True)
-    setup_callbacks()
-    
     print("SERVER_LAUNCHER: Finding agent config...", flush=True)
     config_path = find_agent_config()
     if not config_path.exists():
-        print(f"Error: agent-config.yml not found at {config_path}", file=sys.stderr, flush=True)
+        print(
+            f"Error: agent-config.yml not found at {config_path}",
+            file=sys.stderr,
+            flush=True,
+        )
         sys.exit(1)
+
+    print("SERVER_LAUNCHER: Calling setup_callbacks()...", flush=True)
+    setup_callbacks(config_path)
         
     print(f"Generating LiteLLM config from: {config_path}", flush=True)
     config_dict = generate_config(str(config_path))

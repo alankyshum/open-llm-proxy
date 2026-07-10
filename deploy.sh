@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SUBMODULE_DIR="/Users/alanshum/Documents/dotfiles/.external/open-llm-proxy"
-RUNTIME_DIR="/Users/alanshum/.local/share/kilo-claude-proxy"
-CONFIG_DEST_DIR="/Users/alanshum/.config/kilo-claude-proxy"
-AGENT_CONFIG_SRC="/Users/alanshum/Documents/dotfiles/config/agent-runtime/agent-config.yml"
+SUBMODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOTFILES_ROOT="$(cd "$SUBMODULE_DIR/../.." && pwd)"
+RUNTIME_DIR="${KILO_PROXY_RUNTIME_DIR:-$HOME/.local/share/kilo-claude-proxy}"
+CONFIG_DEST_DIR="${KILO_PROXY_CONFIG_DIR:-$HOME/.config/kilo-claude-proxy}"
+AGENT_CONFIG_SRC="${KILO_PROXY_AGENT_CONFIG:-$DOTFILES_ROOT/config/agent-runtime/agent-config.yml}"
 
 echo "=== Deploying open-llm-proxy submodule -> runtime ==="
 
@@ -44,6 +45,11 @@ else
   python3 -m venv "$RUNTIME_DIR/.venv"
   "$RUNTIME_DIR/.venv/bin/pip" install -q --disable-pip-version-check "$RUNTIME_DIR"
 fi
+
+# 6. Ask for provider plans on first setup and initialize the SQLite policy cache.
+echo "Configuring provider rate-limit plans..."
+"$RUNTIME_DIR/.venv/bin/python" -m open_llm_proxy.setup \
+  --config "$CONFIG_DEST_DIR/agent-config.yml"
 
 echo "=== Deployment complete ==="
 echo "Reminder to restart service:"

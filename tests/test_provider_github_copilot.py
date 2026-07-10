@@ -160,6 +160,7 @@ async def test_error_mapping_429_custom_llm_error(monkeypatch):
     mock_resp = MagicMock(spec=httpx.Response)
     mock_resp.status_code = 429
     mock_resp.text = "Too Many Requests"
+    mock_resp.headers = {"retry-after": "30"}
 
     async def mock_get_client():
         m_client = MagicMock(spec=httpx.AsyncClient)
@@ -177,6 +178,7 @@ async def test_error_mapping_429_custom_llm_error(monkeypatch):
             messages=[{"role": "user", "content": "hi"}]
         )
     assert exc_info.value.status_code == 429
+    assert exc_info.value.headers == {"retry-after": "30"}
 
 
 # ── LIVE SHIELDED COMPLETION TESTS ───────────────────────────────────────────

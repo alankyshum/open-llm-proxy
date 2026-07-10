@@ -1,10 +1,31 @@
 import pytest
 from pathlib import Path
 from open_llm_proxy.config_gen import (
+    configured_model_tokens,
     parse_fallback_chain,
     map_token_to_deployment_params,
     generate_config,
 )
+
+
+def test_configured_model_tokens(tmp_path):
+    config_file = tmp_path / "agent-config.yml"
+    config_file.write_text(
+        """
+file_settings:
+  opencode:
+    model: "open-llm-proxy/[claude-cli/claude-sonnet-5,google/gemini-3.5-flash]"
+agents:
+  reviewer:
+    model: "openrouter/z-ai/glm-5.2"
+"""
+    )
+
+    assert configured_model_tokens(config_file) == {
+        "claude-cli/claude-sonnet-5",
+        "google/gemini-3.5-flash",
+        "openrouter/z-ai/glm-5.2",
+    }
 
 def test_parse_fallback_chain_success():
     # dual prefix acceptance
@@ -55,8 +76,8 @@ def test_map_token_to_deployment_params():
 
     # copilot mapping
     params_copilot = map_token_to_deployment_params("github-copilot/claude-sonnet-5")
-    assert params_copilot["model"] == "github-copilot/claude-sonnet-5"
-    assert params_copilot["api_key"] == "sk-copilot-local"
+    assert params_copilot["model"] == "github-copilot/gh-claude-sonnet-5"
+    assert params_copilot["api_key"] == "not-needed"
 
 def test_generate_config_real(tmp_path):
     # Create a dummy agent-config.yml
@@ -89,6 +110,7 @@ agents:
     router_settings = config_dict["router_settings"]
 
     assert "fallbacks" in litellm_settings
+    assert litellm_settings["drop_params"] is True
     assert "fallbacks" in router_settings
     fallbacks_l = litellm_settings["fallbacks"]
     fallbacks_r = router_settings["fallbacks"]
@@ -100,6 +122,7 @@ agents:
     assert chain_deployment is not None
     # Points to first token: claude-cli/claude-sonnet-5
     assert chain_deployment["litellm_params"]["model"] == "claude-cli/claude-sonnet-5"
+    assert chain_deployment["model_info"]["rate_limit_key"] == "claude-cli/claude-sonnet-5"
 
     # Verify individual tokens are registered as deployments
     t1 = "claude-cli/claude-sonnet-5"
@@ -119,4 +142,30 @@ agents:
     
     # Verify router_settings
     assert router_settings["routing_strategy"] == "simple-shuffle"
-    assert router_settings["num_retries"] == 3
+    assert router_settings["num_retries"] == 0
+    assert router_settings["disable_cooldowns"] is False
+
+
+def test_invalid_claude_cli_id():
+    with pytest.raises(ValueError, match="Invalid claude-cli model ID"):
+        map_token_to_deployment_params("claude-cli/invalid-model-name")
+
+
+def test_surfaced_models_config_gen(tmp_path):
+    dummy_yaml = """
+file_settings:
+  opencode:
+    model: "github-copilot/gpt-5-mini"
+    surfaced_models:
+      - "claude-cli/claude-opus-4-8"
+      - "claude-cli/claude-sonnet-5"
+"""
+    config_file = tmp_path / "agent-config.yml"
+    config_file.write_text(dummy_yaml)
+    config_dict = generate_config(str(config_file))
+    model_list = config_dict["model_list"]
+
+    # Verify that the surfaced models are registered standalone
+    assert any(d["model_name"] == "claude-cli/claude-opus-4-8" for d in model_list)
+    assert any(d["model_name"] == "claude-cli/claude-sonnet-5" for d in model_list)
+
