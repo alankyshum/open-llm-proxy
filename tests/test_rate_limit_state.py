@@ -2,6 +2,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from litellm.exceptions import MidStreamFallbackError
 
 from open_llm_proxy.config_gen import generate_config
 from open_llm_proxy.rate_limit_state import (
@@ -14,9 +15,11 @@ from open_llm_proxy.rate_limit_state import (
 class RateLimitedError(Exception):
     status_code = 429
 
-    def __init__(self, headers=None):
+    def __init__(self, headers=None, *, origin_key=None, provider=None):
         super().__init__("rate limited")
         self.headers = headers or {}
+        self.rate_limit_origin_key = origin_key
+        self.llm_provider = provider
 
 
 class WrappedProviderError(Exception):
@@ -25,6 +28,12 @@ class WrappedProviderError(Exception):
     def __init__(self, original_exception):
         super().__init__("provider stream failed")
         self.original_exception = original_exception
+
+
+class ProviderRateLimitedError(RateLimitedError):
+    def __init__(self, provider, headers=None):
+        super().__init__(headers)
+        self.llm_provider = provider
 
 
 def deployment(key):
@@ -84,7 +93,9 @@ async def test_plan_cooldown_is_persisted_and_filters_until_expiry(tmp_path):
 
     await callback.async_log_failure_event(
         {
-            "exception": RateLimitedError(),
+            "exception": RateLimitedError(
+                origin_key="claude-cli/claude-sonnet-5"
+            ),
             "litellm_params": {
                 "model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}
             },
@@ -138,7 +149,9 @@ file_settings:
 
     await callback.async_log_failure_event(
         {
-            "exception": RateLimitedError(),
+            "exception": RateLimitedError(
+                origin_key="google/gemini-3.5-flash"
+            ),
             "litellm_params": {"model_info": chain[0]["model_info"]},
         },
         None,
@@ -154,7 +167,7 @@ file_settings:
 
 
 @pytest.mark.anyio
-async def test_provider_retry_after_overrides_plan_default(tmp_path):
+async def test_wrapped_fallback_rate_limit_does_not_poison_current_model(tmp_path):
     now = datetime(2026, 7, 10, tzinfo=timezone.utc)
     callback = PersistentRateLimitCallback(
         database_path=tmp_path / "state.sqlite3",
@@ -176,9 +189,157 @@ async def test_provider_retry_after_overrides_plan_default(tmp_path):
         None,
     )
 
+    assert callback.store.retry_at("claude-cli/claude-sonnet-5") is None
+
+
+@pytest.mark.anyio
+async def test_midstream_fallback_rate_limit_does_not_poison_current_model(tmp_path):
+    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    callback = PersistentRateLimitCallback(
+        database_path=tmp_path / "state.sqlite3",
+        configured_plans={"github-copilot": "unlimited"},
+        clock=lambda: now,
+    )
+    error = MidStreamFallbackError(
+        message="previous deployment was rate limited",
+        model="gemini-3.5-flash",
+        llm_provider="github-copilot",
+        original_exception=RateLimitedError({"Retry-After": "60"}),
+        is_pre_first_chunk=True,
+    )
+
+    await callback.async_log_failure_event(
+        {
+            "exception": error,
+            "litellm_params": {
+                "model_info": {
+                    "rate_limit_key": "github-copilot/gemini-3.5-flash"
+                }
+            },
+        },
+        None,
+        None,
+        None,
+    )
+
+    assert callback.store.retry_at("github-copilot/gemini-3.5-flash") is None
+
+
+@pytest.mark.anyio
+async def test_google_rate_limit_does_not_poison_copilot_fallback_metadata(tmp_path):
+    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    callback = PersistentRateLimitCallback(
+        database_path=tmp_path / "state.sqlite3",
+        configured_plans={"github-copilot": "unlimited"},
+        clock=lambda: now,
+    )
+
+    await callback.async_log_failure_event(
+        {
+            "exception": ProviderRateLimitedError("gemini"),
+            "litellm_params": {
+                "model_info": {
+                    "rate_limit_key": "github-copilot/gemini-3.5-flash"
+                }
+            },
+        },
+        None,
+        None,
+        None,
+    )
+
+    assert callback.store.retry_at("github-copilot/gemini-3.5-flash") is None
+
+
+@pytest.mark.anyio
+async def test_custom_provider_origin_overrides_mutated_fallback_metadata(tmp_path):
+    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    callback = PersistentRateLimitCallback(
+        database_path=tmp_path / "state.sqlite3",
+        configured_plans={
+            "google": "free",
+            "github-copilot": "unlimited",
+        },
+        clock=lambda: now,
+    )
+    error = RateLimitedError()
+    error.rate_limit_origin_key = "github-copilot/gemini-3.5-flash"
+
+    await callback.async_log_failure_event(
+        {
+            "exception": error,
+            "litellm_params": {
+                "model_info": {"rate_limit_key": "google/gemini-3.5-flash"}
+            },
+        },
+        None,
+        None,
+        None,
+    )
+
+    assert callback.store.retry_at("google/gemini-3.5-flash") is None
+    assert callback.store.retry_at(
+        "github-copilot/gemini-3.5-flash"
+    ) == now + timedelta(seconds=60)
+
+
+@pytest.mark.anyio
+async def test_direct_provider_retry_after_overrides_plan_default(tmp_path):
+    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    callback = PersistentRateLimitCallback(
+        database_path=tmp_path / "state.sqlite3",
+        configured_plans={"claude-cli": "pro"},
+        clock=lambda: now,
+    )
+
+    await callback.async_log_failure_event(
+        {
+            "exception": RateLimitedError(
+                {"Retry-After": "90"},
+                origin_key="claude-cli/claude-sonnet-5",
+            ),
+            "litellm_params": {
+                "model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}
+            },
+        },
+        None,
+        None,
+        None,
+    )
+
     assert callback.store.retry_at(
         "claude-cli/claude-sonnet-5"
     ) == now + timedelta(seconds=90)
+
+
+@pytest.mark.anyio
+async def test_all_persistently_limited_deployments_raise_specific_error(tmp_path):
+    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    callback = PersistentRateLimitCallback(
+        database_path=tmp_path / "state.sqlite3",
+        configured_plans={"claude-cli": "pro"},
+        clock=lambda: now,
+    )
+    key = "claude-cli/claude-fable-5"
+    callback.store.record_rate_limit(
+        key,
+        occurred_at=now,
+        retry_at=now + timedelta(minutes=90),
+        retry_source="header:retry-after",
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        await callback.async_filter_deployments(
+            "claude-fable", [deployment(key)], None
+        )
+
+    error = exc_info.value
+    assert getattr(error, "status_code", None) == 429
+    assert getattr(error, "proxy_persistent_rate_limit", False)
+    assert "Proxy is running" in str(error)
+    assert key in str(error)
+    assert "2026-07-10T01:30:00Z" in str(error)
+    assert "header:retry-after" in str(error)
 
 
 @pytest.mark.anyio

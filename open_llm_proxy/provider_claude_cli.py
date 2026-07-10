@@ -186,7 +186,9 @@ class ClaudeCliLLM(CustomLLM):
             }
         except Exception as e:
             from open_llm_proxy.errors import map_rate_limit_error
-            raise map_rate_limit_error(e)
+            raise map_rate_limit_error(
+                e, rate_limit_origin_key=f"claude-cli/{model_str}"
+            )
 
     def completion(self, *args, **kwargs) -> ModelResponse:
         try:
@@ -227,7 +229,9 @@ class ClaudeCliLLM(CustomLLM):
             return anthropic_response_to_model_response(raw_response, model)
         except Exception as e:
             from open_llm_proxy.errors import map_rate_limit_error
-            raise map_rate_limit_error(e)
+            raise map_rate_limit_error(
+                e, rate_limit_origin_key=f"claude-cli/{model_str}"
+            )
 
 
 claude_cli_handler = ClaudeCliLLM()

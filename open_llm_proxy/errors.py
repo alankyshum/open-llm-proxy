@@ -19,16 +19,23 @@ def custom_rate_limit_error(
     *,
     retry_after: float | None = None,
     headers: dict[str, str] | None = None,
+    rate_limit_origin_key: str | None = None,
 ) -> CustomLLMError:
     error = CustomLLMError(status_code=429, message=message)
     error.retry_after = retry_after
     error.headers = headers or {}
+    error.rate_limit_origin_key = rate_limit_origin_key
     return error
 
 
-def map_rate_limit_error(err: Exception) -> CustomLLMError:
+def map_rate_limit_error(
+    err: Exception, *, rate_limit_origin_key: str | None = None
+) -> CustomLLMError:
     if isinstance(err, RateLimitError):
         return custom_rate_limit_error(
-            str(err), retry_after=err.retry_after, headers=err.headers
+            str(err),
+            retry_after=err.retry_after,
+            headers=err.headers,
+            rate_limit_origin_key=rate_limit_origin_key,
         )
     return CustomLLMError(status_code=500, message=str(err))

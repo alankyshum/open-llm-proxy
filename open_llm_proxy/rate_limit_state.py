@@ -12,7 +12,9 @@ from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 from litellm.integrations.custom_logger import CustomLogger
+from litellm.exceptions import MidStreamFallbackError
 
+from open_llm_proxy.errors import custom_rate_limit_error
 from open_llm_proxy.rate_limit_catalog import (
     DEFAULT_PLANS,
     SOURCE_CHECKED_AT,
@@ -245,6 +247,25 @@ class RateLimitStore:
             ).fetchone()
         return _parse_timestamp(row["retry_at"]) if row is not None else None
 
+    def active_rate_limit(
+        self, key: str, now: datetime
+    ) -> tuple[datetime, str] | None:
+        provider, model = key.split("/", 1)
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT retry_at, retry_source FROM rate_limits
+                WHERE provider = ? AND model = ?
+                """,
+                (provider, model),
+            ).fetchone()
+        if row is None:
+            return None
+        retry_at = _parse_timestamp(row["retry_at"])
+        if retry_at <= now:
+            return None
+        return retry_at, row["retry_source"]
+
 
 def _rate_limit_key(deployment: dict[str, Any]) -> str | None:
     model_info = deployment.get("model_info") or {}
@@ -273,16 +294,40 @@ def _exception_chain(exception: Any) -> Iterable[Any]:
 
 
 def _is_rate_limit_error(exception: Any) -> bool:
-    for current in _exception_chain(exception):
-        status_code = getattr(current, "status_code", None)
-        if status_code == 429 or str(status_code) == "429":
-            return True
-        response_status = getattr(
-            getattr(current, "response", None), "status_code", None
-        )
-        if response_status == 429 or str(response_status) == "429":
-            return True
-    return False
+    if isinstance(exception, MidStreamFallbackError) or getattr(
+        exception, "proxy_persistent_rate_limit", False
+    ):
+        return False
+    status_code = getattr(exception, "status_code", None)
+    if status_code == 429 or str(status_code) == "429":
+        return True
+    response_status = getattr(
+        getattr(exception, "response", None), "status_code", None
+    )
+    return response_status == 429 or str(response_status) == "429"
+
+
+def _rate_limit_key_for_exception(
+    exception: Any, metadata_key: Any
+) -> str | None:
+    origin_key = getattr(exception, "rate_limit_origin_key", None)
+    if isinstance(origin_key, str) and "/" in origin_key:
+        return origin_key
+    if not isinstance(metadata_key, str) or "/" not in metadata_key:
+        return None
+
+    provider = metadata_key.split("/", 1)[0]
+    exception_provider = getattr(exception, "llm_provider", None)
+    if not isinstance(exception_provider, str) or not exception_provider:
+        return None
+    accepted_providers = {
+        "google": {"gemini", "google", "vertex_ai", "vertex_ai_beta"},
+        "openrouter": {"openrouter"},
+        "opencode": {"openai"},
+    }
+    if exception_provider in accepted_providers.get(provider, set()):
+        return metadata_key
+    return None
 
 
 def _headers_from_exception(exception: Any) -> dict[str, str]:
@@ -330,16 +375,21 @@ def retry_at_from_exception(
     exception: Any, now: datetime
 ) -> tuple[datetime | None, str | None]:
     candidates: list[tuple[datetime, str]] = []
-    for current in _exception_chain(exception):
-        retry_after = getattr(current, "retry_after", None)
-        if isinstance(retry_after, (int, float)) and not isinstance(
-            retry_after, bool
-        ):
-            candidates.append(
-                (now + timedelta(seconds=max(0, retry_after)), "retry_after")
-            )
+    retry_after = getattr(exception, "retry_after", None)
+    if isinstance(retry_after, (int, float)) and not isinstance(retry_after, bool):
+        candidates.append(
+            (now + timedelta(seconds=max(0, retry_after)), "retry_after")
+        )
 
-    headers = _headers_from_exception(exception)
+    headers: dict[str, str] = {}
+    for candidate in (
+        getattr(exception, "headers", None),
+        getattr(getattr(exception, "response", None), "headers", None),
+    ):
+        if isinstance(candidate, Mapping):
+            headers.update(
+                {str(key).lower(): str(value) for key, value in candidate.items()}
+            )
     if "retry-after" in headers:
         timestamp = _retry_after_timestamp(headers["retry-after"], now)
         if timestamp is not None:
@@ -378,13 +428,27 @@ class PersistentRateLimitCallback(CustomLogger):
     ) -> list[dict[str, Any]]:
         now = self._clock().astimezone(timezone.utc)
         available: list[dict[str, Any]] = []
+        unavailable: list[tuple[str, datetime, str]] = []
         for deployment in healthy_deployments:
             key = _rate_limit_key(deployment)
-            retry_at = self.store.retry_at(key) if key is not None else None
-            if retry_at is None or retry_at <= now:
+            active = self.store.active_rate_limit(key, now) if key is not None else None
+            if active is None:
                 available.append(deployment)
             else:
+                retry_at, retry_source = active
+                unavailable.append((key, retry_at, retry_source))
                 log.info("Skipping %s until %s", key, _utc_text(retry_at))
+        if healthy_deployments and not available and unavailable:
+            details = "; ".join(
+                f"{key} until {_utc_text(retry_at)} ({source})"
+                for key, retry_at, source in unavailable
+            )
+            error = custom_rate_limit_error(
+                f"Proxy is running, but model group {model!r} has no eligible "
+                f"deployment. Persistent provider cooldown: {details}"
+            )
+            error.proxy_persistent_rate_limit = True
+            raise error
         return available
 
     def _record_failure(self, kwargs: dict[str, Any], response_obj: Any) -> None:
@@ -393,8 +457,11 @@ class PersistentRateLimitCallback(CustomLogger):
             return
         litellm_params = kwargs.get("litellm_params") or {}
         model_info = litellm_params.get("model_info") or {}
-        key = model_info.get("rate_limit_key") if isinstance(model_info, dict) else None
-        if not isinstance(key, str) or "/" not in key:
+        metadata_key = (
+            model_info.get("rate_limit_key") if isinstance(model_info, dict) else None
+        )
+        key = _rate_limit_key_for_exception(exception, metadata_key)
+        if key is None:
             return
         now = self._clock().astimezone(timezone.utc)
         retry_at, retry_source = retry_at_from_exception(exception, now)

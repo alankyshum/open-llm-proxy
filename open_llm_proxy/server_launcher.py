@@ -20,12 +20,14 @@ from open_llm_proxy.rate_limit_state import (
     PersistentRateLimitCallback,
     load_rate_limit_policy,
 )
+from open_llm_proxy.streaming_safety import install_pre_first_chunk_fallback_only
 print("SERVER_LAUNCHER: All imports done.", flush=True)
 
 log = logging.getLogger("open_llm_proxy.server_launcher")
 
 def setup_callbacks(config_path: str | Path | None = None):
     """Register request transforms and persistent rate-limit tracking."""
+    install_pre_first_chunk_fallback_only()
     if not hasattr(litellm, "callbacks") or litellm.callbacks is None:
         litellm.callbacks = []
 

@@ -452,7 +452,9 @@ class GithubCopilotLLM(CustomLLM):
                     resp = await req_func()
                 if resp.status_code == 429:
                     raise custom_rate_limit_error(
-                        "Rate limited", headers=dict(resp.headers)
+                        "Rate limited",
+                        headers=dict(resp.headers),
+                        rate_limit_origin_key=f"github-copilot/{model_str}",
                     )
                 return resp
             except copilot_creds.CopilotAuthError:
@@ -528,6 +530,8 @@ class GithubCopilotLLM(CustomLLM):
                 await resp.aclose()
                 raise CustomLLMError(status_code=resp.status_code, message=f"HTTP {resp.status_code}")
 
+            stream_finished = False
+            saw_tool_use = False
             try:
                 async for line in resp.aiter_lines():
                     line = line.strip()
@@ -539,20 +543,32 @@ class GithubCopilotLLM(CustomLLM):
                             break
                         try:
                             ch = json.loads(data_str)
-                            yield chunk_to_generic(ch)
+                            choices = ch.get("choices") or []
+                            choice = choices[0] if choices else {}
+                            finish_reason = choice.get("finish_reason")
+                            delta = choice.get("delta") or {}
+                            saw_tool_use = saw_tool_use or bool(delta.get("tool_calls"))
+                            if finish_reason is not None:
+                                stream_finished = True
+                            yield chunk_to_generic(
+                                ch,
+                                is_finished=finish_reason is not None,
+                                finish_reason=finish_reason or "",
+                            )
                         except Exception:
                             pass
             finally:
                 await resp.aclose()
 
-            yield {
-                "text": "",
-                "tool_use": None,
-                "is_finished": True,
-                "finish_reason": "stop",
-                "usage": None,
-                "index": 0,
-            }
+            if not stream_finished:
+                yield {
+                    "text": "",
+                    "tool_use": None,
+                    "is_finished": True,
+                    "finish_reason": "tool_calls" if saw_tool_use else "stop",
+                    "usage": None,
+                    "index": 0,
+                }
 
     def completion(self, *args, **kwargs) -> ModelResponse:
         try:
@@ -621,7 +637,9 @@ class GithubCopilotLLM(CustomLLM):
                     resp = await req_func()
                 if resp.status_code == 429:
                     raise custom_rate_limit_error(
-                        "Rate limited", headers=dict(resp.headers)
+                        "Rate limited",
+                        headers=dict(resp.headers),
+                        rate_limit_origin_key=f"github-copilot/{model_str}",
                     )
                 return resp
             except copilot_creds.CopilotAuthError:

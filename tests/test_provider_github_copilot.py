@@ -179,6 +179,54 @@ async def test_error_mapping_429_custom_llm_error(monkeypatch):
         )
     assert exc_info.value.status_code == 429
     assert exc_info.value.headers == {"retry-after": "30"}
+    assert (
+        exc_info.value.rate_limit_origin_key
+        == "github-copilot/gpt-5-mini"
+    )
+
+
+@pytest.mark.anyio
+async def test_chat_stream_preserves_tool_calls_finish_reason(monkeypatch):
+    handler = GithubCopilotLLM()
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
+    monkeypatch.setattr(
+        handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
+    )
+
+    class StreamingResponse:
+        status_code = 200
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"bash","arguments":"{}"}}]},"finish_reason":null}]}'
+            yield 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}'
+            yield 'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}'
+            yield "data: [DONE]"
+
+        async def aclose(self):
+            pass
+
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.build_request = MagicMock()
+    client.send = AsyncMock(return_value=StreamingResponse())
+    monkeypatch.setattr(handler, "_get_client", AsyncMock(return_value=client))
+
+    chunks = [
+        chunk
+        async for chunk in handler.astreaming(
+            model="github-copilot/claude-opus-4.8",
+            messages=[{"role": "user", "content": "run tool"}],
+        )
+    ]
+
+    assert len(chunks) == 3
+    assert chunks[0]["tool_use"]["id"] == "call-1"
+    finished = [chunk for chunk in chunks if chunk["is_finished"]]
+    assert len(finished) == 1
+    assert finished[0]["finish_reason"] == "tool_calls"
 
 
 # ── LIVE SHIELDED COMPLETION TESTS ───────────────────────────────────────────
