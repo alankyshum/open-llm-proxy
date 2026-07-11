@@ -19,12 +19,14 @@ from open_llm_proxy.rate_limit_catalog import (
     DEFAULT_PLANS,
     SOURCE_CHECKED_AT,
     get_plan_policy,
+    PROVIDER_PLANS,
+    PlanPolicy,
 )
 
 log = logging.getLogger("open_llm_proxy.rate_limit_state")
 
 _DEFAULT_DATABASE_PATH = (
-    Path.home() / ".config" / "kilo-claude-proxy" / "state.sqlite3"
+    Path.home() / ".config" / "open-llm-proxy" / "state.sqlite3"
 )
 
 
@@ -66,9 +68,17 @@ def _parse_timestamp(value: str) -> datetime:
 
 
 class RateLimitStore:
-    def __init__(self, database_path: str | Path) -> None:
+    def __init__(
+        self,
+        database_path: str | Path,
+        configured_plans: Mapping[str, str] | None = None,
+    ) -> None:
         self.database_path = Path(database_path)
         self._lock = threading.RLock()
+        self._plans: dict[str, tuple[str, PlanPolicy]] = {}
+        if configured_plans is not None:
+            for provider, plan_name in configured_plans.items():
+                self._plans[provider] = (plan_name, get_plan_policy(provider, plan_name))
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -82,18 +92,6 @@ class RateLimitStore:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS provider_plans (
-                    provider TEXT PRIMARY KEY,
-                    plan TEXT NOT NULL,
-                    label TEXT NOT NULL,
-                    default_cooldown_seconds INTEGER NOT NULL,
-                    quota_limited INTEGER NOT NULL,
-                    limits_json TEXT NOT NULL,
-                    source_url TEXT NOT NULL,
-                    source_checked_at TEXT NOT NULL,
-                    configured_at TEXT NOT NULL
-                );
-
                 CREATE TABLE IF NOT EXISTS models (
                     provider TEXT NOT NULL,
                     model TEXT NOT NULL,
@@ -113,42 +111,6 @@ class RateLimitStore:
                 """
             )
 
-    def configure_plan(
-        self, provider: str, plan: str, *, overwrite: bool = True
-    ) -> None:
-        policy = get_plan_policy(provider, plan)
-        now = _utc_text(datetime.now(timezone.utc))
-        statement = (
-            "INSERT OR REPLACE"
-            if overwrite
-            else "INSERT OR IGNORE"
-        )
-        with self._lock, self._connect() as connection:
-            connection.execute(
-                f"""
-                {statement} INTO provider_plans (
-                    provider, plan, label, default_cooldown_seconds,
-                    quota_limited, limits_json, source_url,
-                    source_checked_at, configured_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    provider,
-                    plan,
-                    policy.label,
-                    policy.default_cooldown_seconds,
-                    int(policy.quota_limited),
-                    json.dumps(policy.limits, sort_keys=True),
-                    policy.source_url,
-                    SOURCE_CHECKED_AT,
-                    now,
-                ),
-            )
-
-    def seed_plans(self, configured_plans: Mapping[str, str]) -> None:
-        for provider, plan in configured_plans.items():
-            self.configure_plan(provider, plan, overwrite=False)
-
     def register_models(self, model_keys: Iterable[str]) -> None:
         now = _utc_text(datetime.now(timezone.utc))
         with self._lock, self._connect() as connection:
@@ -166,39 +128,58 @@ class RateLimitStore:
                     (provider, model, now, now),
                 )
 
-    def configured_plan(self, provider: str) -> sqlite3.Row | None:
-        with self._lock, self._connect() as connection:
-            return connection.execute(
-                "SELECT * FROM provider_plans WHERE provider = ?", (provider,)
-            ).fetchone()
-
-    def inventory(self) -> list[sqlite3.Row]:
-        with self._lock, self._connect() as connection:
-            return connection.execute(
-                """
-                SELECT
-                    m.provider, m.model, p.plan, p.label,
-                    p.default_cooldown_seconds, p.quota_limited,
-                    p.limits_json, p.source_url, p.source_checked_at
-                FROM models AS m
-                LEFT JOIN provider_plans AS p USING (provider)
-                ORDER BY m.provider, m.model
-                """
-            ).fetchall()
-
-    def ensure_default_plan(self, provider: str) -> sqlite3.Row:
-        row = self.configured_plan(provider)
-        if row is not None:
-            return row
+    def _resolve(self, provider: str) -> tuple[str, PlanPolicy]:
+        if provider in self._plans:
+            return self._plans[provider]
         try:
-            plan = DEFAULT_PLANS[provider]
+            plan_name = DEFAULT_PLANS[provider]
         except KeyError as exc:
             raise ValueError(f"no rate-limit policy for provider {provider}") from exc
-        self.configure_plan(provider, plan, overwrite=False)
-        row = self.configured_plan(provider)
-        if row is None:
-            raise RuntimeError(f"failed to configure rate-limit policy for {provider}")
-        return row
+        policy = get_plan_policy(provider, plan_name)
+        self._plans[provider] = (plan_name, policy)
+        return plan_name, policy
+
+    def configured_plan(self, provider: str) -> tuple[str, PlanPolicy]:
+        return self._resolve(provider)
+
+    def inventory(self) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as connection:
+            db_rows = connection.execute(
+                "SELECT provider, model FROM models ORDER BY provider, model"
+            ).fetchall()
+        
+        results = []
+        for row in db_rows:
+            provider = row["provider"]
+            model = row["model"]
+            try:
+                plan_name, policy = self._resolve(provider)
+            except ValueError:
+                plan_name, label, default_cooldown_seconds, quota_limited, limits_json, source_url = (
+                    None, None, None, None, None, None
+                )
+            else:
+                label = policy.label
+                default_cooldown_seconds = policy.default_cooldown_seconds
+                quota_limited = int(policy.quota_limited)
+                limits_json = json.dumps(policy.limits, sort_keys=True)
+                source_url = policy.source_url
+            
+            results.append({
+                "provider": provider,
+                "model": model,
+                "plan": plan_name,
+                "label": label,
+                "default_cooldown_seconds": default_cooldown_seconds,
+                "quota_limited": quota_limited,
+                "limits_json": limits_json,
+                "source_url": source_url,
+                "source_checked_at": SOURCE_CHECKED_AT,
+            })
+        return results
+
+    def ensure_default_plan(self, provider: str) -> tuple[str, PlanPolicy]:
+        return self._resolve(provider)
 
     def record_rate_limit(
         self,
@@ -209,12 +190,12 @@ class RateLimitStore:
         retry_source: str | None,
     ) -> None:
         provider, model = key.split("/", 1)
-        plan = self.ensure_default_plan(provider)
+        plan_name, policy = self.ensure_default_plan(provider)
         if retry_at is None:
             retry_at = occurred_at + timedelta(
-                seconds=plan["default_cooldown_seconds"]
+                seconds=policy.default_cooldown_seconds
             )
-            retry_source = f"plan:{plan['plan']}"
+            retry_source = f"plan:{plan_name}"
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
@@ -413,8 +394,7 @@ class PersistentRateLimitCallback(CustomLogger):
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         super().__init__()
-        self.store = RateLimitStore(database_path)
-        self.store.seed_plans(configured_plans or {})
+        self.store = RateLimitStore(database_path, configured_plans)
         self.store.register_models(model_keys)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 

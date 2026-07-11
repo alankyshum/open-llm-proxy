@@ -26,8 +26,8 @@ file_settings:
 
     store = configure(config_path, interactive=False)
 
-    assert store.configured_plan("claude-cli")["plan"] == "pro"
-    assert store.configured_plan("google")["plan"] == "free"
+    assert store.configured_plan("claude-cli")[0] == "pro"
+    assert store.configured_plan("google")[0] == "free"
     assert {
         (row["provider"], row["model"]) for row in store.inventory()
     } == {

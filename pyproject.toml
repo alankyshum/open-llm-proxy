@@ -12,7 +12,8 @@ description = "Lightweight litellm Router proxy"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "litellm",
+    "litellm[proxy]",
+    "prisma",
     "httpx[http2]",
     "pyyaml"
 ]

@@ -1,0 +1,24 @@
+# PostgreSQL backing store for the LiteLLM Admin UI (spend tracking, keys, teams).
+# Managed with Podman: `podman compose up -d` / `podman compose down`.
+# The proxy connects via DATABASE_URL (see run.sh / ~/.config/open-llm-proxy/env).
+services:
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: open-llm-proxy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - open-llm-proxy-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  open-llm-proxy-pgdata:

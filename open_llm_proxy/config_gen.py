@@ -21,10 +21,8 @@ def parse_fallback_chain(model_str: str) -> list[str]:
     s = model_str.strip()
     if s.startswith("open-llm-proxy/"):
         s = s[len("open-llm-proxy/"):]
-    elif s.startswith("kilo-proxy/"):
-        s = s[len("kilo-proxy/"):]
     
-    if s.startswith("[") or s.endswith("]"):
+    if s.startswith("[") or s.endswith("]") :
         if not (s.startswith("[") and s.endswith("]")):
             raise ValueError(f"Malformed fallback chain: {model_str}")
         inner = s[1:-1].strip()
@@ -157,8 +155,6 @@ def generate_config(agent_config_path: str) -> dict:
         stripped_model = raw_model
         if stripped_model.startswith("open-llm-proxy/"):
             stripped_model = stripped_model[len("open-llm-proxy/"):]
-        elif stripped_model.startswith("kilo-proxy/"):
-            stripped_model = stripped_model[len("kilo-proxy/"):]
             
         primary_token = tokens[0]
         

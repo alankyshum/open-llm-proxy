@@ -59,7 +59,7 @@ def test_get_oauth_token_from_fallback_file(monkeypatch, tmp_path):
     fake_home.mkdir()
     monkeypatch.setattr(Path, "home", lambda: fake_home)
 
-    fallback_file = fake_home / ".config" / "kilo-claude-proxy" / "copilot.json"
+    fallback_file = fake_home / ".config" / "open-llm-proxy" / "copilot.json"
     fallback_file.parent.mkdir(parents=True)
     fallback_file.write_text(json.dumps({"oauth_token": "ghu_fallback123"}), encoding="utf-8")
 

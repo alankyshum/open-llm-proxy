@@ -28,8 +28,8 @@ agents:
     }
 
 def test_parse_fallback_chain_success():
-    # dual prefix acceptance
-    c1 = "kilo-proxy/[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
+    # dual prefix acceptance -> no longer dual prefix, open-llm-proxy only
+    c1 = "open-llm-proxy/[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
     tokens1 = parse_fallback_chain(c1)
     assert tokens1 == ["claude-cli/claude-sonnet-5", "github-copilot/claude-sonnet-5", "openrouter/z-ai/glm-5.2"]
 
@@ -84,7 +84,7 @@ def test_generate_config_real(tmp_path):
     dummy_yaml = """
 file_settings:
   opencode:
-    model: "kilo-proxy/[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
+    model: "open-llm-proxy/[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
     small_model: "github-copilot/gpt-5-mini"
 
 agents:

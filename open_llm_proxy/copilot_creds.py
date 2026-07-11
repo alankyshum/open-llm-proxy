@@ -20,7 +20,7 @@ log = logging.getLogger("open_llm_proxy.copilot_creds")
 COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 _KEYCHAIN_SERVICE = "GitHub Copilot Proxy"
 def get_fallback_path() -> Path:
-    return Path.home() / ".config" / "kilo-claude-proxy" / "copilot.json"
+    return Path.home() / ".config" / "open-llm-proxy" / "copilot.json"
 
 
 _TOKEN_EXCHANGE_URL = "https://api.github.com/copilot_internal/v2/token"

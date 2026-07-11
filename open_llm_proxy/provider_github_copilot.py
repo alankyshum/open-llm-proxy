@@ -132,15 +132,16 @@ def copilot_chat_to_responses(body: dict[str, Any]) -> dict[str, Any]:
                     })
             else:
                 content = m.get("content")
+                text_part_type = "output_text" if role == "assistant" else "input_text"
                 if isinstance(content, str):
-                    mapped_content = [{"type": "input_text", "text": content}]
+                    mapped_content = [{"type": text_part_type, "text": content}]
                 elif isinstance(content, list):
                     mapped_content = []
                     for part in content:
                         if isinstance(part, dict):
                             if part.get("type") == "text":
                                 mapped_content.append({
-                                    "type": "input_text",
+                                    "type": text_part_type,
                                     "text": part.get("text", ""),
                                 })
                             else:

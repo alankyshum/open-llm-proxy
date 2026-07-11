@@ -3,9 +3,9 @@ set -euo pipefail
 
 SUBMODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOTFILES_ROOT="$(cd "$SUBMODULE_DIR/../.." && pwd)"
-RUNTIME_DIR="${KILO_PROXY_RUNTIME_DIR:-$HOME/.local/share/kilo-claude-proxy}"
-CONFIG_DEST_DIR="${KILO_PROXY_CONFIG_DIR:-$HOME/.config/kilo-claude-proxy}"
-AGENT_CONFIG_SRC="${KILO_PROXY_AGENT_CONFIG:-$DOTFILES_ROOT/config/agent-runtime/agent-config.yml}"
+RUNTIME_DIR="${OPEN_LLM_PROXY_RUNTIME_DIR:-$HOME/.local/share/open-llm-proxy}"
+CONFIG_DEST_DIR="${OPEN_LLM_PROXY_CONFIG_DIR:-$HOME/.config/open-llm-proxy}"
+AGENT_CONFIG_SRC="${OPEN_LLM_PROXY_AGENT_CONFIG:-$DOTFILES_ROOT/config/agent-runtime/agent-config.yml}"
 BIN_DIR="$RUNTIME_DIR/bin"
 LOCAL_BIN_LINK="${HOME}/.local/bin/open-llm-proxy"
 
@@ -19,8 +19,8 @@ rsync -av --delete "$SUBMODULE_DIR/open_llm_proxy/" "$RUNTIME_DIR/open_llm_proxy
 # 2. Sync run.sh
 if [ -f "$RUNTIME_DIR/run.sh" ]; then
   if ! cmp -s "$SUBMODULE_DIR/run.sh" "$RUNTIME_DIR/run.sh"; then
-    echo "run.sh changed. Backing up existing to run.sh.kilo-bak..."
-    cp "$RUNTIME_DIR/run.sh" "$RUNTIME_DIR/run.sh.kilo-bak"
+    echo "run.sh changed. Backing up existing to run.sh.open-llm-bak..."
+    cp "$RUNTIME_DIR/run.sh" "$RUNTIME_DIR/run.sh.open-llm-bak"
     cp "$SUBMODULE_DIR/run.sh" "$RUNTIME_DIR/run.sh"
     chmod +x "$RUNTIME_DIR/run.sh"
   fi
@@ -47,6 +47,14 @@ else
   python3 -m venv "$RUNTIME_DIR/.venv"
   "$RUNTIME_DIR/.venv/bin/pip" install -q --disable-pip-version-check "$RUNTIME_DIR"
 fi
+
+# 5b. Generate the Prisma client for the Admin UI (needs the litellm schema).
+SCHEMA="$("$RUNTIME_DIR/.venv/bin/python" -c 'import os,litellm; print(os.path.join(os.path.dirname(litellm.__file__),"proxy","schema.prisma"))' 2>/dev/null || true)"
+if [ -n "$SCHEMA" ] && [ -f "$SCHEMA" ]; then
+  echo "Generating Prisma client for the Admin UI..."
+  PATH="$RUNTIME_DIR/.venv/bin:$PATH" "$RUNTIME_DIR/.venv/bin/python" -m prisma generate --schema "$SCHEMA" || true
+fi
+
 mkdir -p "$BIN_DIR"
 ln -snf "$RUNTIME_DIR/.venv/bin/open-llm-proxy" "$BIN_DIR/open-llm-proxy"
 if [ -e "$LOCAL_BIN_LINK" ] && [ ! -L "$LOCAL_BIN_LINK" ]; then
@@ -62,4 +70,4 @@ echo "Configuring provider rate-limit plans..."
 
 echo "=== Deployment complete ==="
 echo "Reminder to restart service:"
-echo "launchctl kickstart -k gui/\$(id -u)/com.user.kilo-claude-proxy"
+echo "launchctl kickstart -k gui/\$(id -u)/com.user.open-llm-proxy"

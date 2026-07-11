@@ -36,7 +36,16 @@ async def test_proxy_integration_smoke():
         pytest.skip(f"agent-config.yml not found at {config_path}. Skipping integration test.")
 
     # Start the server in a separate Process
-    proc = Process(target=launch_server, kwargs={"host": "127.0.0.1", "port": test_port}, daemon=True)
+    proc = Process(
+        target=launch_server,
+        kwargs={
+            "host": "127.0.0.1",
+            "port": test_port,
+            "disable_admin_ui": True,
+            "master_key": "sk-local",
+        },
+        daemon=True,
+    )
     proc.start()
     
     try:

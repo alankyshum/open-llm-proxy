@@ -14,13 +14,17 @@ print("SERVER_LAUNCHER: Importing open_llm_proxy callbacks/config...", flush=Tru
 from open_llm_proxy.callbacks import (
     FallbackChainCommaRewriterCallback,
     GeminiThinkingBudgetCallback,
+    ServedByCallback,
 )
 from open_llm_proxy.config_gen import configured_model_tokens, generate_config
 from open_llm_proxy.rate_limit_state import (
     PersistentRateLimitCallback,
     load_rate_limit_policy,
 )
-from open_llm_proxy.streaming_safety import install_pre_first_chunk_fallback_only
+from open_llm_proxy.streaming_safety import (
+    install_non_stream_attribution,
+    install_pre_first_chunk_fallback_only,
+)
 print("SERVER_LAUNCHER: All imports done.", flush=True)
 
 log = logging.getLogger("open_llm_proxy.server_launcher")
@@ -53,12 +57,16 @@ def setup_callbacks(config_path: str | Path | None = None):
         litellm.callbacks.append(rewriter_callback)
         log.info("FallbackChainCommaRewriterCallback registered.")
 
+    if not any(isinstance(c, ServedByCallback) for c in litellm.callbacks):
+        litellm.callbacks.append(ServedByCallback())
+        log.info("ServedByCallback registered.")
+
 def find_agent_config() -> Path:
     """
     Finds agent-config.yml by traversing upwards or looking in the dotfiles workspace.
     """
     # Prefer non-TCC fallback path under .config if it exists
-    config_in_home = Path.home() / ".config" / "kilo-claude-proxy" / "agent-config.yml"
+    config_in_home = Path.home() / ".config" / "open-llm-proxy" / "agent-config.yml"
     if config_in_home.exists():
         return config_in_home
 
@@ -73,12 +81,25 @@ def find_agent_config() -> Path:
     # Fallback default
     return Path("/Users/alanshum/Documents/dotfiles/config/agent-runtime/agent-config.yml")
 
-def launch_server(host: str = "0.0.0.0", port: int = 8765):
+def launch_server(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    disable_admin_ui: bool | None = None,
+    database_url: str | None = None,
+    master_key: str | None = None,
+    ui_username: str | None = None,
+    ui_password: str | None = None,
+    config_path: str | Path | None = None,
+):
     """
     Launches the programmatic LiteLLM proxy server on the specified port.
     """
     print("SERVER_LAUNCHER: Finding agent config...", flush=True)
-    config_path = find_agent_config()
+    if config_path is None:
+        config_path = find_agent_config()
+    else:
+        config_path = Path(config_path)
+
     if not config_path.exists():
         print(
             f"Error: agent-config.yml not found at {config_path}",
@@ -87,35 +108,116 @@ def launch_server(host: str = "0.0.0.0", port: int = 8765):
         )
         sys.exit(1)
 
+    # --- Resolve Admin UI configuration (argument > environment) BEFORE doing any
+    # side effects (tempfile, app import) so validation failures leave no debris. ---
+    #
+    # The Admin UI is a first-class, ON-by-default feature. It only requires a
+    # PostgreSQL DATABASE_URL and a master key. When a database is configured we
+    # auto-provision a master key so the proxy never crash-loops on a missing
+    # secret. UI is disabled only when explicitly requested OR when no database
+    # is configured (LiteLLM cannot serve the Admin UI without Postgres).
+    env_disable_ui = os.environ.get("DISABLE_ADMIN_UI", "").lower() in ("true", "1")
+
+    resolved_database_url = database_url if database_url is not None else os.environ.get("DATABASE_URL")
+    resolved_master_key = master_key if master_key is not None else os.environ.get("LITELLM_MASTER_KEY")
+    resolved_ui_username = ui_username if ui_username is not None else os.environ.get("UI_USERNAME")
+    resolved_ui_password = ui_password if ui_password is not None else os.environ.get("UI_PASSWORD")
+
+    # Determine whether the UI should run.
+    if disable_admin_ui is True:
+        ui_disabled = True
+    elif env_disable_ui:
+        ui_disabled = True
+    elif not resolved_database_url:
+        # No database => UI cannot function; fall back to DB-less proxy mode
+        # instead of crashing. This keeps `serve` working out of the box.
+        log.warning(
+            "DATABASE_URL not set; starting in DB-less mode with the Admin UI "
+            "disabled. Start PostgreSQL (podman compose up -d) and set "
+            "DATABASE_URL to enable the Admin UI at /ui."
+        )
+        print(
+            "UI Status: Disabled (no DATABASE_URL — DB-less mode)",
+            flush=True,
+        )
+        ui_disabled = True
+    else:
+        ui_disabled = False
+
+    if not resolved_master_key:
+        import secrets
+
+        resolved_master_key = f"sk-{secrets.token_urlsafe(32)}"
+        log.warning(
+            "LITELLM_MASTER_KEY not set; generated an ephemeral master key "
+            "for this run. Set LITELLM_MASTER_KEY in "
+            "~/.config/open-llm-proxy/env to make it stable."
+        )
+
+    # ALWAYS ensure LITELLM_MASTER_KEY is set in env before importing proxy_server
+    os.environ["LITELLM_MASTER_KEY"] = resolved_master_key
+
     print("SERVER_LAUNCHER: Calling setup_callbacks()...", flush=True)
     setup_callbacks(config_path)
-        
+
     print(f"Generating LiteLLM config from: {config_path}", flush=True)
     config_dict = generate_config(str(config_path))
-    
+
     # Use Ephemeral tempfile fallback as LiteLLM 1.83.7 expects a file path
     # write to temp file, register on CONFIG_FILE_PATH, then launch.
     with tempfile.NamedTemporaryFile(mode="w", suffix="_litellm_config.yaml", delete=False) as f:
         yaml.safe_dump(config_dict, f, sort_keys=False)
         temp_config_path = f.name
-        
+
     print(f"Created ephemeral config file at: {temp_config_path}")
-    
+
     # Set the environment variable so LiteLLM's module load catches it
     os.environ["CONFIG_FILE_PATH"] = temp_config_path
-    
-    # Also set litellm-specific settings
-    os.environ["LITELLM_MASTER_KEY"] = "sk-local"
+
+    if ui_disabled:
+        os.environ["DISABLE_ADMIN_UI"] = "True"
+    else:
+        # Clear any stale disable flag so the UI actually serves.
+        os.environ.pop("DISABLE_ADMIN_UI", None)
+
+    # Publish resolved environment variables for LiteLLM's proxy module.
+    if resolved_database_url:
+        os.environ["DATABASE_URL"] = resolved_database_url
+    if resolved_master_key:
+        os.environ["LITELLM_MASTER_KEY"] = resolved_master_key
+    if resolved_ui_username:
+        os.environ["UI_USERNAME"] = resolved_ui_username
+    if resolved_ui_password:
+        os.environ["UI_PASSWORD"] = resolved_ui_password
+
+    if not ui_disabled:
+        print("UI Status: Enabled", flush=True)
+        print(f"Admin UI: http://{host}:{port}/ui", flush=True)
+        print(
+            f"UI Username: {resolved_ui_username if resolved_ui_username else 'admin (LiteLLM default)'}",
+            flush=True,
+        )
     
     try:
         # Import app after CONFIG_FILE_PATH has been set to ensure the module-level load of
         # litellm.proxy.proxy_server parses the correct configuration.
         from litellm.proxy.proxy_server import app
+        from open_llm_proxy.usage_reporting import install_usage_reporting
+        install_usage_reporting(app)
+        install_non_stream_attribution()
         
         # Add healthz endpoint for sync-agents validation
         @app.get("/healthz")
         async def healthz():
             return {"status": "ok"}
+        
+        if ui_disabled:
+            from fastapi import Response
+            @app.middleware("http")
+            async def block_ui_middleware(request, call_next):
+                if request.url.path == "/ui" or request.url.path.startswith("/ui/") or request.url.path.startswith("/_next"):
+                    return Response("Admin UI is disabled.", status_code=404)
+                return await call_next(request)
         
         print(f"Starting programmatically on {host}:{port}...", flush=True)
         uvicorn.run(app, host=host, port=port)
@@ -129,10 +231,29 @@ def launch_server(host: str = "0.0.0.0", port: int = 8765):
                 print(f"Warning: failed to delete ephemeral config file {temp_config_path}: {e}", file=sys.stderr)
 
 if __name__ == "__main__":
-    # Allow passing host/port from cli
     import argparse
     parser = argparse.ArgumentParser(description="Launch open-llm-proxy programmatically")
-    parser.add_argument("--host", default="0.0.0.0", help="Host address to bind to")
+    parser.add_argument("--host", default="127.0.0.1", help="Host address to bind to")
     parser.add_argument("--port", type=int, default=8765, help="Port to listen on")
+    parser.add_argument(
+        "--disable-admin-ui",
+        action="store_true",
+        default=None,
+        help="Disable the LiteLLM Admin UI (DB-less proxy mode).",
+    )
+    parser.add_argument("--database-url", default=None, help="PostgreSQL URL for the Admin UI.")
+    parser.add_argument("--master-key", default=None, help="Master key securing the Admin UI.")
+    parser.add_argument("--ui-username", default=None, help="Admin UI login username.")
+    parser.add_argument("--ui-password", default=None, help="Admin UI login password.")
+    parser.add_argument("--config-path", default=None, help="Path to agent-config.yml.")
     args = parser.parse_args()
-    launch_server(host=args.host, port=args.port)
+    launch_server(
+        host=args.host,
+        port=args.port,
+        disable_admin_ui=args.disable_admin_ui,
+        database_url=args.database_url,
+        master_key=args.master_key,
+        ui_username=args.ui_username,
+        ui_password=args.ui_password,
+        config_path=args.config_path,
+    )

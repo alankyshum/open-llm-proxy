@@ -62,8 +62,7 @@ rate_limit_policy:
 
 
 def test_store_caches_models_and_policy_metadata(tmp_path):
-    store = RateLimitStore(tmp_path / "state.sqlite3")
-    store.configure_plan("openrouter", "free")
+    store = RateLimitStore(tmp_path / "state.sqlite3", configured_plans={"openrouter": "free"})
     store.register_models(
         ["openrouter/model-a:free", "openrouter/model-b:free"]
     )

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from open_llm_proxy.config_gen import configured_model_tokens
-from open_llm_proxy.rate_limit_catalog import DEFAULT_PLANS, PROVIDER_PLANS
+from open_llm_proxy.rate_limit_catalog import DEFAULT_PLANS, PROVIDER_PLANS, get_plan_policy
 from open_llm_proxy.rate_limit_state import RateLimitStore, load_rate_limit_policy
 
 
@@ -57,8 +57,8 @@ def configure(
     force: bool = False,
 ) -> RateLimitStore:
     policy_config = load_rate_limit_policy(config_path)
-    configured_defaults = policy_config.pop("configured_plans")
-    store = RateLimitStore(policy_config["database_path"])
+    configured_defaults = policy_config.get("configured_plans") or {}
+    store = RateLimitStore(policy_config["database_path"], configured_plans=configured_defaults)
     model_keys = configured_model_tokens(config_path)
     store.register_models(model_keys)
 
@@ -67,12 +67,10 @@ def configure(
         if provider not in PROVIDER_PLANS:
             print(f"Warning: no built-in rate-limit plans for {provider}", file=sys.stderr)
             continue
-        existing = store.configured_plan(provider)
-        if existing is not None and not force:
-            continue
-        default = configured_defaults.get(provider, DEFAULT_PLANS[provider])
-        plan = _choose_plan(provider, default) if interactive else default
-        store.configure_plan(provider, plan)
+        if interactive:
+            default = configured_defaults.get(provider, DEFAULT_PLANS[provider])
+            plan = _choose_plan(provider, default)
+            store._plans[provider] = (plan, get_plan_policy(provider, plan))
 
     _print_inventory(store)
     return store
@@ -84,7 +82,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--config",
-        default=Path.home() / ".config/kilo-claude-proxy/agent-config.yml",
+        default=Path.home() / ".config/open-llm-proxy/agent-config.yml",
         type=Path,
         help="Path to agent-config.yml",
     )

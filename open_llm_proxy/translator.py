@@ -541,7 +541,7 @@ _DEFAULT_BILLING_HEADER = (
 
 
 def billing_header_text() -> str:
-    return os.environ.get("KILO_PROXY_BILLING_HEADER", _DEFAULT_BILLING_HEADER)
+    return os.environ.get("OPEN_LLM_PROXY_BILLING_HEADER", _DEFAULT_BILLING_HEADER)
 
 
 def _billing_header_block() -> dict[str, Any]:
@@ -697,7 +697,7 @@ _RTK_GIT_PREFIX = "git "
 
 
 def apply_rtk_to_args(args: dict) -> dict:
-    if os.environ.get("KILO_PROXY_RTK_GIT") != "1":
+    if os.environ.get("OPEN_LLM_PROXY_RTK_GIT") != "1":
         return args
     cmd = args.get("command")
     if not isinstance(cmd, str):

@@ -229,6 +229,43 @@ async def test_chat_stream_preserves_tool_calls_finish_reason(monkeypatch):
     assert finished[0]["finish_reason"] == "tool_calls"
 
 
+def test_copilot_chat_to_responses_role_based_content_parts():
+    # 1. assistant message with string content -> output_text
+    req_assistant_str = {
+        "model": "gpt-5.5",
+        "messages": [{"role": "assistant", "content": "hello from assistant"}]
+    }
+    res = copilot_chat_to_responses(req_assistant_str)
+    assert res["input"][0]["content"] == [{"type": "output_text", "text": "hello from assistant"}]
+
+    # 2. user message with string content -> input_text
+    req_user_str = {
+        "model": "gpt-5.5",
+        "messages": [{"role": "user", "content": "hello from user"}]
+    }
+    res = copilot_chat_to_responses(req_user_str)
+    assert res["input"][0]["content"] == [{"type": "input_text", "text": "hello from user"}]
+
+    # 3. system message -> input_text
+    req_system_str = {
+        "model": "gpt-5.5",
+        "messages": [{"role": "system", "content": "you are a system"}]
+    }
+    res = copilot_chat_to_responses(req_system_str)
+    assert res["input"][0]["content"] == [{"type": "input_text", "text": "you are a system"}]
+
+    # 4. assistant message with a list of parts -> output_text
+    req_assistant_list = {
+        "model": "gpt-5.5",
+        "messages": [{
+            "role": "assistant",
+            "content": [{"type": "text", "text": "structured response"}]
+        }]
+    }
+    res = copilot_chat_to_responses(req_assistant_list)
+    assert res["input"][0]["content"] == [{"type": "output_text", "text": "structured response"}]
+
+
 # ── LIVE SHIELDED COMPLETION TESTS ───────────────────────────────────────────
 
 
