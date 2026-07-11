@@ -22,7 +22,6 @@ from open_llm_proxy.rate_limit_state import (
     load_rate_limit_policy,
 )
 from open_llm_proxy.streaming_safety import (
-    install_non_stream_attribution,
     install_pre_first_chunk_fallback_only,
 )
 print("SERVER_LAUNCHER: All imports done.", flush=True)
@@ -204,7 +203,6 @@ def launch_server(
         from litellm.proxy.proxy_server import app
         from open_llm_proxy.usage_reporting import install_usage_reporting
         install_usage_reporting(app)
-        install_non_stream_attribution()
         
         # Add healthz endpoint for sync-agents validation
         @app.get("/healthz")

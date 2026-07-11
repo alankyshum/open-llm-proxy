@@ -78,6 +78,11 @@ def map_token_to_deployment_params(token: str) -> dict:
             "api_key": "os.environ/GEMINI_API_KEY"
         }
     elif provider == "opencode":
+        from open_llm_proxy.opencode_creds import get_opencode_api_key
+        # Securely read key at runtime/config generation to fail fast if absent.
+        # This populates os.environ["OPENCODE_API_KEY"] if sourced from auth.json.
+        key = get_opencode_api_key()
+        os.environ["OPENCODE_API_KEY"] = key
         return {
             "model": f"openai/{rest}",
             "api_base": "https://opencode.ai/zen/v1",

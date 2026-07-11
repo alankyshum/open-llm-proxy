@@ -55,7 +55,8 @@ def test_parse_fallback_chain_failures():
     with pytest.raises(ValueError):
         parse_fallback_chain("[claude-cli]") # missing slash
 
-def test_map_token_to_deployment_params():
+def test_map_token_to_deployment_params(monkeypatch):
+    monkeypatch.setenv("OPENCODE_API_KEY", "sk-opencode-mock-key")
     # google gemini prefix mapping
     params_google = map_token_to_deployment_params("google/models/gemini-2.5-flash")
     assert params_google["model"] == "gemini/gemini-2.5-flash"

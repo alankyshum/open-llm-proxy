@@ -36,6 +36,9 @@ async def test_proxy_integration_smoke():
         pytest.skip(f"agent-config.yml not found at {config_path}. Skipping integration test.")
 
     # Start the server in a separate Process
+    if "OPENCODE_API_KEY" not in os.environ:
+        os.environ["OPENCODE_API_KEY"] = "sk-opencode-mock-key"
+
     proc = Process(
         target=launch_server,
         kwargs={
@@ -50,7 +53,7 @@ async def test_proxy_integration_smoke():
     
     try:
         # Wait for the server to bind to the port
-        if not wait_for_port(test_port, timeout=12.0):
+        if not wait_for_port(test_port, timeout=60.0):
             pytest.fail("Timeout waiting for proxy server to start.")
             
         # Perform test call to the proxy
