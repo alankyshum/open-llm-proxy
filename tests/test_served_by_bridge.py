@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from fastapi import FastAPI
 from open_llm_proxy.attribution import (
     AttributionStore,
+    attribution_id_from_data,
     get_attribution_token,
     global_attribution_store,
 )
@@ -53,6 +54,35 @@ def test_attribution_store_ttl():
     # Move past TTL
     fake_time = 106.0
     assert store.get(uid) is None
+
+
+def test_attribution_store_announces_only_winner_changes():
+    store = AttributionStore()
+    uid = str(uuid.uuid4())
+
+    assert store.announce_if_changed(uid, "model-a") is True
+    assert store.announce_if_changed(uid, "model-a") is False
+
+    # Response-header tracking updates latest winner without consuming the
+    # changed-winner announcement used by response-body attribution.
+    store.set(uid, "model-b")
+    assert store.get(uid) == "model-b"
+    assert store.announce_if_changed(uid, "model-b") is True
+    assert store.announce_if_changed(uid, "model-b") is False
+
+
+def test_attribution_id_from_litellm_request_metadata():
+    uid = str(uuid.uuid4())
+    data = {
+        "litellm_params": {
+            "proxy_server_request": {
+                "headers": {"X-Open-LLM-Proxy-Attribution-ID": uid}
+            }
+        }
+    }
+
+    assert attribution_id_from_data(data) == uid
+    assert attribution_id_from_data({}) is None
 
 
 def test_attribution_token_env_precedes_file(monkeypatch, tmp_path):

@@ -24,6 +24,7 @@ from open_llm_proxy.rate_limit_state import (
     load_rate_limit_policy,
 )
 from open_llm_proxy.streaming_safety import (
+    install_non_stream_attribution,
     install_pre_first_chunk_fallback_only,
 )
 from open_llm_proxy.gemini_isolation import install_gemini_shared_state_isolation
@@ -290,6 +291,7 @@ def launch_server(
         # Import app after CONFIG_FILE_PATH has been set to ensure the module-level load of
         # litellm.proxy.proxy_server parses the correct configuration.
         from litellm.proxy.proxy_server import app
+        install_non_stream_attribution()
         from open_llm_proxy.usage_reporting import install_usage_reporting
         install_usage_reporting(app)
         

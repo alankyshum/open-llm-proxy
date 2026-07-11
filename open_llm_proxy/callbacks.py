@@ -5,16 +5,13 @@ import logging
 import copy
 from litellm.integrations.custom_logger import CustomLogger
 
-log = logging.getLogger("open_llm_proxy.callbacks")
+from open_llm_proxy.attribution import (
+    attribution_id_from_headers,
+    global_attribution_store,
+    served_by_from_data,
+)
 
-def is_first_assistant_turn(data: dict[str, Any]) -> bool:
-    """Return whether request history has no completed assistant turn yet."""
-    messages = data.get("messages") or []
-    return not any(
-        (message.get("role") if isinstance(message, dict) else getattr(message, "role", None))
-        == "assistant"
-        for message in messages
-    )
+log = logging.getLogger("open_llm_proxy.callbacks")
 
 # Regex for extracting agent types from task description
 _AGENT_LIST_RE = re.compile(
@@ -197,13 +194,7 @@ class ServedByCallback(CustomLogger):
         request_headers: Optional[dict[str, str]] = None,
         litellm_call_info: Optional[dict[str, Any]] = None,
     ) -> dict[str, str]:
-        key = None
-        if isinstance(data, dict):
-            deployment = data.get("deployment")
-            if isinstance(deployment, dict):
-                model_info = deployment.get("model_info")
-                if isinstance(model_info, dict):
-                    key = model_info.get("rate_limit_key")
+        key = served_by_from_data(data)
 
         if not key and isinstance(litellm_call_info, dict):
             model_info = litellm_call_info.get("model_info")
@@ -238,16 +229,11 @@ class ServedByCallback(CustomLogger):
 
         if isinstance(key, str) and key:
             try:
-                if request_headers and isinstance(request_headers, dict):
-                    # case-insensitive read x-open-llm-proxy-attribution-id from request_headers and record
-                    attr_id = None
-                    for k, v in request_headers.items():
-                        if k.lower() == "x-open-llm-proxy-attribution-id":
-                            attr_id = v
-                            break
-                    if attr_id:
-                        from open_llm_proxy.attribution import global_attribution_store
-                        global_attribution_store.set(attr_id, key)
+                attr_id = attribution_id_from_headers(request_headers)
+                if attr_id:
+                    # Header lookup reports latest winner but does not consume
+                    # the inline change announcement.
+                    global_attribution_store.set(attr_id, key)
             except Exception:
                 pass
             return {"x-open-llm-proxy-served-by": key}
