@@ -16,6 +16,8 @@ from open_llm_proxy.provider_github_copilot import (
     copilot_handler,
     _initiator_for,
     _has_image_part,
+    _normalize_tools_for_copilot,
+    _ensure_object_schemas_have_properties,
     copilot_chat_to_responses,
     copilot_responses_to_chat,
 )
@@ -490,6 +492,73 @@ async def test_live_copilot_gpt_5_5_responses_path():
     content = res.choices[0].message.content
     assert content is not None
     assert "pong" in content.lower()
+
+
+# ── TOOL SCHEMA NORMALIZATION (Copilot boundary defense-in-depth) ─────────────
+
+
+def _obj_tool(params: dict) -> dict:
+    return {"type": "function", "function": {"name": "t", "parameters": params}}
+
+
+def test_normalize_adds_properties_to_bare_object():
+    # A no-argument tool emitted as just {"type": "object"} — Copilot 400s on this.
+    tools = [_obj_tool({"type": "object"})]
+    out = _normalize_tools_for_copilot(tools)
+    assert out[0]["function"]["parameters"] == {"type": "object", "properties": {}}
+
+
+def test_normalize_adds_properties_when_only_additionalproperties():
+    # The exact shape the Gemini transform can leave behind.
+    tools = [_obj_tool({"type": "object", "additionalProperties": False})]
+    out = _normalize_tools_for_copilot(tools)
+    p = out[0]["function"]["parameters"]
+    assert p["properties"] == {}
+    assert p["additionalProperties"] is False
+
+
+def test_normalize_preserves_existing_properties():
+    params = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}
+    out = _normalize_tools_for_copilot([_obj_tool(params)])
+    assert out[0]["function"]["parameters"] == params
+
+
+def test_normalize_recurses_into_nested_objects_arrays_and_defs():
+    params = {
+        "type": "object",
+        "properties": {
+            "nested": {"type": "object"},  # missing properties, nested
+            "arr": {"type": "array", "items": {"type": "object"}},  # under items
+        },
+        "$defs": {"D": {"type": "object"}},  # under $defs
+    }
+    out = _normalize_tools_for_copilot([_obj_tool(params)])
+    p = out[0]["function"]["parameters"]
+    assert p["properties"]["nested"]["properties"] == {}
+    assert p["properties"]["arr"]["items"]["properties"] == {}
+    assert p["$defs"]["D"]["properties"] == {}
+
+
+def test_normalize_does_not_mutate_caller_object():
+    # The router shares one tools list across every fallback deployment; mutating
+    # it here would corrupt the request for other providers.
+    original = _obj_tool({"type": "object", "additionalProperties": False})
+    tools = [original]
+    _normalize_tools_for_copilot(tools)
+    assert "properties" not in original["function"]["parameters"]
+
+
+def test_normalize_leaves_non_object_schemas_untouched():
+    params = {"type": "string", "enum": ["a", "b"]}
+    out = _normalize_tools_for_copilot([_obj_tool(params)])
+    assert out[0]["function"]["parameters"] == {"type": "string", "enum": ["a", "b"]}
+
+
+def test_ensure_object_schemas_handles_combinators():
+    node = {"anyOf": [{"type": "object"}, {"type": "string"}]}
+    _ensure_object_schemas_have_properties(node)
+    assert node["anyOf"][0]["properties"] == {}
+    assert node["anyOf"][1] == {"type": "string"}
 
 
 @pytest.mark.skipif(not has_copilot, reason="No GitHub Copilot credentials resolved on this machine")

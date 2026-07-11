@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import re
@@ -16,6 +17,73 @@ from open_llm_proxy import copilot_creds
 from open_llm_proxy.errors import custom_rate_limit_error, upstream_http_error
 
 log = logging.getLogger("open_llm_proxy.provider_github_copilot")
+
+
+def _ensure_object_schemas_have_properties(node: Any) -> None:
+    """Recursively guarantee every JSON-Schema object node carries a ``properties`` key.
+
+    GitHub Copilot's Gemini-backed endpoint returns a bare HTTP 400 "Bad Request"
+    for any ``{"type": "object"}`` tool-parameter schema that lacks a ``properties``
+    key. Two distinct real cases produce such a schema at this boundary:
+
+    * an upstream provider transform strips an empty ``properties`` (e.g. LiteLLM's
+      Vertex/Gemini ``_build_vertex_schema`` during an earlier fallback-chain
+      attempt), and
+    * a tool/MCP definition that natively emits a no-argument object as just
+      ``{"type": "object"}``.
+
+    Re-adding ``properties: {}`` is semantically a no-op (an object declaring no
+    properties) yet satisfies Copilot's validator. Complementary to
+    ``gemini_isolation``, which prevents the cross-contamination case upstream;
+    this also closes the native-schema case that isolation cannot reach.
+    """
+    if isinstance(node, dict):
+        for key in ("properties", "$defs", "definitions"):
+            sub = node.get(key)
+            if isinstance(sub, dict):
+                for child in sub.values():
+                    _ensure_object_schemas_have_properties(child)
+        for key in ("items", "additionalProperties", "not", "if", "then", "else"):
+            if isinstance(node.get(key), dict):
+                _ensure_object_schemas_have_properties(node[key])
+        for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+            seq = node.get(key)
+            if isinstance(seq, list):
+                for child in seq:
+                    _ensure_object_schemas_have_properties(child)
+        if node.get("type") == "object" and "properties" not in node:
+            node["properties"] = {}
+    elif isinstance(node, list):
+        for child in node:
+            _ensure_object_schemas_have_properties(child)
+
+
+def _normalize_tools_for_copilot(tools: Any) -> Any:
+    """Return a deep copy of ``tools`` with Copilot-hostile schemas repaired.
+
+    Walks each tool's parameter schema (both the OpenAI chat shape
+    ``{"type":"function","function":{"parameters":...}}`` and the flattened
+    Responses shape ``{"type":"function","parameters":...}``) and enforces the
+    object-``properties`` invariant recursively.
+
+    Never mutates the caller's object: the router shares one tools list across all
+    fallback-chain deployments, so in-place mutation here would corrupt the request
+    for other providers (the very class of bug ``gemini_isolation`` fixes).
+    """
+    try:
+        normalized = copy.deepcopy(tools)
+    except Exception:
+        return tools
+    if isinstance(normalized, list):
+        for t in normalized:
+            if not isinstance(t, dict):
+                continue
+            fn = t.get("function")
+            if isinstance(fn, dict) and isinstance(fn.get("parameters"), dict):
+                _ensure_object_schemas_have_properties(fn["parameters"])
+            if isinstance(t.get("parameters"), dict):
+                _ensure_object_schemas_have_properties(t["parameters"])
+    return normalized
 
 
 def _initiator_for(body: dict[str, Any]) -> str:
@@ -419,7 +487,7 @@ class GithubCopilotLLM(CustomLLM):
             "messages": messages,
         }
         if tools:
-            body["tools"] = tools
+            body["tools"] = _normalize_tools_for_copilot(tools)
         if max_tokens:
             body["max_tokens"] = max_tokens
         if temperature is not None:
@@ -630,7 +698,7 @@ class GithubCopilotLLM(CustomLLM):
             "messages": messages,
         }
         if tools:
-            body["tools"] = tools
+            body["tools"] = _normalize_tools_for_copilot(tools)
         if max_tokens:
             body["max_tokens"] = max_tokens
         if temperature is not None:
