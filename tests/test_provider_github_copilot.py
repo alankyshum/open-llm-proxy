@@ -266,6 +266,215 @@ def test_copilot_chat_to_responses_role_based_content_parts():
     assert res["input"][0]["content"] == [{"type": "output_text", "text": "structured response"}]
 
 
+@pytest.mark.anyio
+async def test_chat_stream_non_200_error_body_handling(monkeypatch):
+    handler = GithubCopilotLLM()
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
+    monkeypatch.setattr(
+        handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
+    )
+
+    class MockResponse_200_fail:
+        status_code = 400
+        is_closed = False
+
+        async def aiter_bytes(self, chunk_size=1024):
+            yield b"Some error details here"
+
+        async def aclose(self):
+            self.is_closed = True
+
+    mock_resp = MockResponse_200_fail()
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.build_request = MagicMock()
+    client.send = AsyncMock(return_value=mock_resp)
+    monkeypatch.setattr(handler, "_get_client", AsyncMock(return_value=client))
+
+    # A genuine HTTP 400 must surface as a non-retriable BadRequestError, not a
+    # CustomLLMError (which LiteLLM maps to a retriable APIConnectionError for
+    # custom providers, causing an infinite fallback retry loop).
+    from litellm.exceptions import BadRequestError
+
+    with pytest.raises(BadRequestError) as exc_info:
+        async for _ in handler.astreaming(
+            model="github-copilot/claude-opus-4.8",
+            messages=[{"role": "user", "content": "hi"}],
+        ):
+            pass
+
+    assert "Some error details here" in exc_info.value.message
+    assert mock_resp.is_closed
+
+
+@pytest.mark.anyio
+async def test_chat_stream_non_200_empty_body_handling(monkeypatch):
+    handler = GithubCopilotLLM()
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
+    monkeypatch.setattr(
+        handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
+    )
+
+    class MockResponse_empty:
+        status_code = 500
+        is_closed = False
+
+        async def aiter_bytes(self, chunk_size=1024):
+            # empty body
+            if False:
+                yield b""
+
+        async def aclose(self):
+            self.is_closed = True
+
+    mock_resp = MockResponse_empty()
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.build_request = MagicMock()
+    client.send = AsyncMock(return_value=mock_resp)
+    monkeypatch.setattr(handler, "_get_client", AsyncMock(return_value=client))
+
+    with pytest.raises(CustomLLMError) as exc_info:
+        async for _ in handler.astreaming(
+            model="github-copilot/claude-opus-4.8",
+            messages=[{"role": "user", "content": "hi"}],
+        ):
+            pass
+
+    assert exc_info.value.message == "HTTP 500"
+    assert mock_resp.is_closed
+
+
+@pytest.mark.anyio
+async def test_chat_stream_non_200_oversized_truncation(monkeypatch):
+    handler = GithubCopilotLLM()
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
+    monkeypatch.setattr(
+        handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
+    )
+
+    class MockResponse_large:
+        status_code = 403
+        is_closed = False
+
+        async def aiter_bytes(self, chunk_size=1024):
+            # Yield 5 chunks of 1024 bytes
+            for _ in range(5):
+                yield b"A" * 1024
+
+        async def aclose(self):
+            self.is_closed = True
+
+    mock_resp = MockResponse_large()
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.build_request = MagicMock()
+    client.send = AsyncMock(return_value=mock_resp)
+    monkeypatch.setattr(handler, "_get_client", AsyncMock(return_value=client))
+
+    with pytest.raises(CustomLLMError) as exc_info:
+        async for _ in handler.astreaming(
+            model="github-copilot/claude-opus-4.8",
+            messages=[{"role": "user", "content": "hi"}],
+        ):
+            pass
+
+    # Exact length: 4096 (A's) + "... [truncated]" length (15) = 4111
+    assert len(exc_info.value.message) == 4111
+    assert exc_info.value.message.endswith("... [truncated]")
+    assert mock_resp.is_closed
+
+
+@pytest.mark.anyio
+async def test_chat_stream_non_200_invalid_utf8_replacement(monkeypatch):
+    handler = GithubCopilotLLM()
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
+    monkeypatch.setattr(
+        handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
+    )
+
+    class MockResponse_invalid_utf8:
+        status_code = 502
+        is_closed = False
+
+        async def aiter_bytes(self, chunk_size=1024):
+            yield b"Error: \xff\xff invalid bytes"
+
+        async def aclose(self):
+            self.is_closed = True
+
+    mock_resp = MockResponse_invalid_utf8()
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.build_request = MagicMock()
+    client.send = AsyncMock(return_value=mock_resp)
+    monkeypatch.setattr(handler, "_get_client", AsyncMock(return_value=client))
+
+    with pytest.raises(CustomLLMError) as exc_info:
+        async for _ in handler.astreaming(
+            model="github-copilot/claude-opus-4.8",
+            messages=[{"role": "user", "content": "hi"}],
+        ):
+            pass
+
+    assert "Error: \ufffd\ufffd invalid bytes" in exc_info.value.message
+    assert mock_resp.is_closed
+
+
+@pytest.mark.anyio
+async def test_chat_stream_non_200_exact_4096_boundary(monkeypatch):
+    handler = GithubCopilotLLM()
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
+    monkeypatch.setattr(
+        handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
+    )
+
+    class MockResponse_exact_4096:
+        status_code = 401
+        is_closed = False
+
+        async def aiter_bytes(self, chunk_size=1024):
+            # Yield exactly 4 chunks of 1024 bytes
+            for _ in range(4):
+                yield b"B" * 1024
+
+        async def aclose(self):
+            self.is_closed = True
+
+    mock_resp = MockResponse_exact_4096()
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.build_request = MagicMock()
+    client.send = AsyncMock(return_value=mock_resp)
+    monkeypatch.setattr(handler, "_get_client", AsyncMock(return_value=client))
+
+    with pytest.raises(CustomLLMError) as exc_info:
+        async for _ in handler.astreaming(
+            model="github-copilot/claude-opus-4.8",
+            messages=[{"role": "user", "content": "hi"}],
+        ):
+            pass
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.message == "B" * 4096
+    assert mock_resp.is_closed
+
+
 # ── LIVE SHIELDED COMPLETION TESTS ───────────────────────────────────────────
 
 

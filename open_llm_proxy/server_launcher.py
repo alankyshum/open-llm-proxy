@@ -1,5 +1,7 @@
 import os
 import sys
+import json
+import hmac
 print("SERVER_LAUNCHER: Python started, importing modules...", flush=True)
 import tempfile
 import logging
@@ -24,13 +26,104 @@ from open_llm_proxy.rate_limit_state import (
 from open_llm_proxy.streaming_safety import (
     install_pre_first_chunk_fallback_only,
 )
+from open_llm_proxy.gemini_isolation import install_gemini_shared_state_isolation
 print("SERVER_LAUNCHER: All imports done.", flush=True)
 
 log = logging.getLogger("open_llm_proxy.server_launcher")
 
+
+def register_attribution_endpoint(app):
+    """Register authenticated loopback lookup for request attribution."""
+    from fastapi import HTTPException, Request, Response
+    from open_llm_proxy.attribution import get_attribution_token, global_attribution_store
+
+    @app.get("/internal/attribution/v1/{attribution_id}")
+    async def get_attribution(attribution_id: str, request: Request):
+        if not request.client or request.client.host not in ("127.0.0.1", "::1"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        token = get_attribution_token()
+        authorization = request.headers.get("Authorization", "")
+        if not token or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        if not hmac.compare_digest(authorization[7:], token):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+        served_by = global_attribution_store.get(attribution_id)
+        if not served_by:
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        return Response(
+            content=json.dumps({"servedBy": served_by}),
+            media_type="application/json",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    return get_attribution
+
+# ---------------------------------------------------------------------------
+# Stable config lifecycle  — replaces ephemeral NamedTemporaryFile path
+# (LiteLLM's APScheduler re-reads the config every 30 s; a missing temp
+# path causes repeated "Config file not found" / credential DB errors.)
+# ---------------------------------------------------------------------------
+STABLE_CONFIG_BASENAME = "generated-litellm-config.yaml"
+
+def _resolve_stable_config_dir() -> Path:
+    """Directory for the generated LiteLLM config.
+
+    Respects OPEN_LLM_PROXY_CONFIG_DIR env var if set, otherwise
+    ``~/.config/open-llm-proxy`` (the canonical config directory already
+    used for agent-config.yml, env, and the rate-limit SQLite DB).
+    """
+    env_dir = os.environ.get("OPEN_LLM_PROXY_CONFIG_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return Path.home() / ".config" / "open-llm-proxy"
+
+def resolve_stable_config_path() -> Path:
+    """Persistent config path scoped to this proxy process."""
+    stem = Path(STABLE_CONFIG_BASENAME).stem
+    suffix = Path(STABLE_CONFIG_BASENAME).suffix
+    return _resolve_stable_config_dir() / f"{stem}-{os.getpid()}{suffix}"
+
+def write_config_atomic(config_dict: dict, path: str | Path | None = None) -> str:
+    """Write *config_dict* as YAML to *path* atomically with mode 0o600.
+
+    Uses a same‑directory temp file + ``os.replace`` so the target is
+    never torn (partial write).  Mode is enforced on the temp before
+    replacement and again on the final path after replacement.
+
+    Returns the final path as a string.
+    """
+    if path is None:
+        path = resolve_stable_config_path()
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp = tempfile.mkstemp(
+        suffix=".tmp",
+        prefix=f".{STABLE_CONFIG_BASENAME}.",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(config_dict, f, sort_keys=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+        # Mode may not survive replace on some filesystems; re‑apply.
+        path.chmod(0o600)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return str(path)
+
 def setup_callbacks(config_path: str | Path | None = None):
     """Register request transforms and persistent rate-limit tracking."""
     install_pre_first_chunk_fallback_only()
+    install_gemini_shared_state_isolation()
     if not hasattr(litellm, "callbacks") or litellm.callbacks is None:
         litellm.callbacks = []
 
@@ -162,16 +255,12 @@ def launch_server(
     print(f"Generating LiteLLM config from: {config_path}", flush=True)
     config_dict = generate_config(str(config_path))
 
-    # Use Ephemeral tempfile fallback as LiteLLM 1.83.7 expects a file path
-    # write to temp file, register on CONFIG_FILE_PATH, then launch.
-    with tempfile.NamedTemporaryFile(mode="w", suffix="_litellm_config.yaml", delete=False) as f:
-        yaml.safe_dump(config_dict, f, sort_keys=False)
-        temp_config_path = f.name
-
-    print(f"Created ephemeral config file at: {temp_config_path}")
+    # Keep each process's config available for LiteLLM scheduler re-reads.
+    stable_config_path = write_config_atomic(config_dict)
+    print(f"Generated LiteLLM config at: {stable_config_path}")
 
     # Set the environment variable so LiteLLM's module load catches it
-    os.environ["CONFIG_FILE_PATH"] = temp_config_path
+    os.environ["CONFIG_FILE_PATH"] = stable_config_path
 
     if ui_disabled:
         os.environ["DISABLE_ADMIN_UI"] = "True"
@@ -208,6 +297,8 @@ def launch_server(
         @app.get("/healthz")
         async def healthz():
             return {"status": "ok"}
+
+        register_attribution_endpoint(app)
         
         if ui_disabled:
             from fastapi import Response
@@ -219,14 +310,9 @@ def launch_server(
         
         print(f"Starting programmatically on {host}:{port}...", flush=True)
         uvicorn.run(app, host=host, port=port)
-    finally:
-        # Clean up the ephemeral config file on shutdown
-        if os.path.exists(temp_config_path):
-            try:
-                os.remove(temp_config_path)
-                print(f"Deleted ephemeral config file: {temp_config_path}")
-            except Exception as e:
-                print(f"Warning: failed to delete ephemeral config file {temp_config_path}: {e}", file=sys.stderr)
+    except Exception:
+        log.exception("Fatal error during server startup")
+        raise
 
 if __name__ == "__main__":
     import argparse

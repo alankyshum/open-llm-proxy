@@ -13,7 +13,7 @@ from litellm.llms.custom_llm import CustomLLM, CustomLLMError
 from litellm.types.utils import GenericStreamingChunk, ModelResponse
 
 from open_llm_proxy import copilot_creds
-from open_llm_proxy.errors import custom_rate_limit_error
+from open_llm_proxy.errors import custom_rate_limit_error, upstream_http_error
 
 log = logging.getLogger("open_llm_proxy.provider_github_copilot")
 
@@ -476,7 +476,7 @@ class GithubCopilotLLM(CustomLLM):
 
             resp = await send_with_retry(_send_responses)
             if resp.status_code != 200:
-                raise CustomLLMError(status_code=resp.status_code, message=resp.text)
+                raise upstream_http_error(resp.status_code, resp.text)
 
             resp_data = resp.json()
             chat_dict = copilot_responses_to_chat(
@@ -528,8 +528,34 @@ class GithubCopilotLLM(CustomLLM):
 
             resp = await send_with_retry(_send_chat)
             if resp.status_code != 200:
-                await resp.aclose()
-                raise CustomLLMError(status_code=resp.status_code, message=f"HTTP {resp.status_code}")
+                try:
+                    err_bytes = b""
+                    is_truncated = False
+                    stream_iter = resp.aiter_bytes(chunk_size=1024)
+                    async for chunk in stream_iter:
+                        if len(err_bytes) + len(chunk) > 4096:
+                            err_bytes += chunk[:4096 - len(err_bytes)]
+                            is_truncated = True
+                            break
+                        err_bytes += chunk
+                    
+                    # Distinguish exact 4096-byte body from >4096 without unbounded reads
+                    if len(err_bytes) == 4096 and not is_truncated:
+                        try:
+                            extra = await anext(stream_iter)
+                            if extra:
+                                is_truncated = True
+                        except StopAsyncIteration:
+                            pass
+
+                    err_text = err_bytes.decode("utf-8", errors="replace")
+                    if is_truncated:
+                        err_text += "... [truncated]"
+                except Exception as e:
+                    err_text = f"HTTP {resp.status_code} (failed to read body: {e})"
+                finally:
+                    await resp.aclose()
+                raise upstream_http_error(resp.status_code, err_text)
 
             stream_finished = False
             saw_tool_use = False
@@ -660,7 +686,7 @@ class GithubCopilotLLM(CustomLLM):
 
             resp = await send_with_retry(_send_responses)
             if resp.status_code != 200:
-                raise CustomLLMError(status_code=resp.status_code, message=resp.text)
+                raise upstream_http_error(resp.status_code, resp.text)
 
             resp_data = resp.json()
             chat_dict = copilot_responses_to_chat(
@@ -688,7 +714,7 @@ class GithubCopilotLLM(CustomLLM):
 
             resp = await send_with_retry(_send_chat)
             if resp.status_code != 200:
-                raise CustomLLMError(status_code=resp.status_code, message=resp.text)
+                raise upstream_http_error(resp.status_code, resp.text)
 
             resp_json = resp.json()
             choices = resp_json.get("choices", [])

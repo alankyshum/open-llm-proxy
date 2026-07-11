@@ -25,3 +25,8 @@ open-llm-proxy = "open_llm_proxy.cli:main"
 dev = [
     "pytest"
 ]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.0",
+]

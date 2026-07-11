@@ -28,6 +28,31 @@ def custom_rate_limit_error(
     return error
 
 
+def upstream_http_error(status_code: int, message: str) -> Exception:
+    """Build the right exception type for a non-200 upstream HTTP response.
+
+    A genuine client error (HTTP 400) must NOT be retried: opencode chains and
+    LiteLLM's router treat retriable errors by rotating deployments and re-sending
+    the SAME payload, which for a deterministic 400 just loops forever.
+
+    LiteLLM's ``exception_type`` only maps ``CustomLLMError(status_code=400)`` to a
+    retriable ``APIConnectionError`` for custom providers (github-copilot falls
+    into the generic ``else`` branch that always yields APIConnectionError). So for
+    400 we raise LiteLLM's own ``BadRequestError`` directly, which ``exception_type``
+    passes through unchanged as a non-retriable 400. All other statuses keep the
+    existing ``CustomLLMError`` behaviour.
+    """
+    if status_code == 400:
+        from litellm.exceptions import BadRequestError
+
+        return BadRequestError(
+            message=message or "Bad Request",
+            model="github-copilot",
+            llm_provider="github-copilot",
+        )
+    return CustomLLMError(status_code=status_code, message=message or f"HTTP {status_code}")
+
+
 def map_rate_limit_error(
     err: Exception, *, rate_limit_origin_key: str | None = None
 ) -> CustomLLMError:

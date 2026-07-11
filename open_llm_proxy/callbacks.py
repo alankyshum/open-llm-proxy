@@ -237,5 +237,18 @@ class ServedByCallback(CustomLogger):
                     pass
 
         if isinstance(key, str) and key:
+            try:
+                if request_headers and isinstance(request_headers, dict):
+                    # case-insensitive read x-open-llm-proxy-attribution-id from request_headers and record
+                    attr_id = None
+                    for k, v in request_headers.items():
+                        if k.lower() == "x-open-llm-proxy-attribution-id":
+                            attr_id = v
+                            break
+                    if attr_id:
+                        from open_llm_proxy.attribution import global_attribution_store
+                        global_attribution_store.set(attr_id, key)
+            except Exception:
+                pass
             return {"x-open-llm-proxy-served-by": key}
         return {}
