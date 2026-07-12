@@ -10,10 +10,13 @@ from pathlib import Path
 
 import pytest
 import yaml
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from open_llm_proxy.server_launcher import (
     STABLE_CONFIG_BASENAME,
     _resolve_stable_config_dir,
+    register_config_reload_endpoint,
     resolve_stable_config_path,
     write_config_atomic,
 )
@@ -208,3 +211,72 @@ class TestConfigPersistence:
         with open(target) as f:
             data = yaml.safe_load(f)
         assert data["model_list"][0]["model_name"] == "gen-2"
+
+
+class _FakeReloader:
+    def __init__(self, active_hash: str, *, applied: bool = True) -> None:
+        self.active_hash = active_hash
+        self.applied = applied
+        self.calls: list[str] = []
+
+    async def reload(self, expected_hash: str | None = None) -> bool:
+        assert expected_hash is not None
+        self.calls.append(expected_hash)
+        return self.applied
+
+
+def _reload_client(reloader, host: str = "127.0.0.1") -> TestClient:
+    app = FastAPI()
+    register_config_reload_endpoint(app, reloader)
+    return TestClient(app, client=(host, 50000))
+
+
+class TestConfigReloadEndpoint:
+    def test_loopback_validates_source_even_when_hash_is_already_active(self):
+        expected_hash = "a" * 64
+        reloader = _FakeReloader(expected_hash)
+
+        response = _reload_client(reloader).post(
+            "/internal/config/reload",
+            json={"expected_hash": expected_hash},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok", "config_hash": expected_hash}
+        assert reloader.calls == [expected_hash]
+
+    def test_non_loopback_request_is_forbidden(self):
+        expected_hash = "b" * 64
+        reloader = _FakeReloader(expected_hash)
+
+        response = _reload_client(reloader, host="192.0.2.1").post(
+            "/internal/config/reload",
+            json={"expected_hash": expected_hash},
+        )
+
+        assert response.status_code == 403
+        assert reloader.calls == []
+
+    @pytest.mark.parametrize("expected_hash", [None, "abc", "A" * 64])
+    def test_invalid_hash_is_rejected(self, expected_hash):
+        reloader = _FakeReloader("c" * 64)
+
+        response = _reload_client(reloader).post(
+            "/internal/config/reload",
+            json={"expected_hash": expected_hash},
+        )
+
+        assert response.status_code == 400
+        assert reloader.calls == []
+
+    def test_reloader_rejection_requires_full_restart(self):
+        expected_hash = "d" * 64
+        reloader = _FakeReloader("e" * 64, applied=False)
+
+        response = _reload_client(reloader).post(
+            "/internal/config/reload",
+            json={"expected_hash": expected_hash},
+        )
+
+        assert response.status_code == 409
+        assert reloader.calls == [expected_hash]

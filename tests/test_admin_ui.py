@@ -46,7 +46,7 @@ def test_launch_server_ui_default_on_degrades_without_db(monkeypatch, tmp_path):
     config_path.write_text("file_settings:\n  opencode:\n    model: open-llm-proxy/google/gemini-flash\n")
 
     monkeypatch.setattr("open_llm_proxy.server_launcher.setup_callbacks", lambda *args, **kwargs: None)
-    monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config", lambda *args, **kwargs: {})
+    monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config_from_data", lambda *args, **kwargs: {})
     monkeypatch.setattr("open_llm_proxy.server_launcher.find_agent_config", lambda: config_path)
     monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: None)
 
@@ -68,7 +68,7 @@ def test_launch_server_ui_autogenerates_master_key_with_db(monkeypatch, tmp_path
     config_path.write_text("file_settings:\n  opencode:\n    model: open-llm-proxy/google/gemini-flash\n")
 
     monkeypatch.setattr("open_llm_proxy.server_launcher.setup_callbacks", lambda *args, **kwargs: None)
-    monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config", lambda *args, **kwargs: {})
+    monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config_from_data", lambda *args, **kwargs: {})
     monkeypatch.setattr("open_llm_proxy.server_launcher.find_agent_config", lambda: config_path)
     monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: None)
 
@@ -92,7 +92,7 @@ def test_launch_server_allows_db_less_operation_when_ui_disabled(monkeypatch, tm
     config_path.write_text("file_settings:\n  opencode:\n    model: open-llm-proxy/google/gemini-flash\n")
 
     monkeypatch.setattr("open_llm_proxy.server_launcher.setup_callbacks", lambda *args, **kwargs: None)
-    monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config", lambda *args, **kwargs: {})
+    monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config_from_data", lambda *args, **kwargs: {})
     monkeypatch.setattr("open_llm_proxy.server_launcher.find_agent_config", lambda: config_path)
     monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: None)
 
@@ -113,7 +113,7 @@ def test_launch_server_precedence_argument_over_env(monkeypatch, tmp_path):
     config_path.write_text("file_settings:\n  opencode:\n    model: open-llm-proxy/google/gemini-flash\n")
 
     monkeypatch.setattr("open_llm_proxy.server_launcher.setup_callbacks", lambda *args, **kwargs: None)
-    monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config", lambda *args, **kwargs: {})
+    monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config_from_data", lambda *args, **kwargs: {})
     monkeypatch.setattr("open_llm_proxy.server_launcher.find_agent_config", lambda: config_path)
     monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: None)
 

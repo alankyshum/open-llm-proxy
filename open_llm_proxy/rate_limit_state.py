@@ -30,10 +30,8 @@ _DEFAULT_DATABASE_PATH = (
 )
 
 
-def load_rate_limit_policy(config_path: str | Path) -> dict[str, Any]:
-    with open(config_path) as config_file:
-        data = yaml.safe_load(config_file) or {}
-
+def load_rate_limit_policy_from_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Load policy from an already parsed, immutable config snapshot."""
     raw_policy = data.get("rate_limit_policy") or {}
     if not isinstance(raw_policy, dict):
         raise ValueError("rate_limit_policy must be a mapping")
@@ -54,6 +52,14 @@ def load_rate_limit_policy(config_path: str | Path) -> dict[str, Any]:
         get_plan_policy(provider, plan)
 
     return {"database_path": database_path, "configured_plans": plans}
+
+
+def load_rate_limit_policy(config_path: str | Path) -> dict[str, Any]:
+    with open(config_path) as config_file:
+        data = yaml.safe_load(config_file) or {}
+    if not isinstance(data, dict):
+        raise ValueError("agent config must be a mapping")
+    return load_rate_limit_policy_from_data(data)
 
 
 def _utc_text(value: datetime) -> str:

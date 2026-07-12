@@ -97,9 +97,16 @@ def map_token_to_deployment_params(token: str) -> dict:
         }
 
 
-def configured_model_tokens(agent_config_path: str | Path) -> set[str]:
-    with open(agent_config_path) as config_file:
-        data = yaml.safe_load(config_file) or {}
+def parse_agent_config(source: str | bytes) -> dict:
+    """Parse one immutable agent-config snapshot."""
+    data = yaml.safe_load(source) or {}
+    if not isinstance(data, dict):
+        raise ValueError("agent config must be a mapping")
+    return data
+
+
+def configured_model_tokens_from_data(data: dict) -> set[str]:
+    """Extract concrete provider/model keys from parsed agent config."""
 
     model_strings = set()
     
@@ -134,9 +141,14 @@ def configured_model_tokens(agent_config_path: str | Path) -> set[str]:
     return tokens
 
 
-def generate_config(agent_config_path: str) -> dict:
-    with open(agent_config_path) as config_file:
-        data = yaml.safe_load(config_file) or {}
+def configured_model_tokens(agent_config_path: str | Path) -> set[str]:
+    return configured_model_tokens_from_data(
+        parse_agent_config(Path(agent_config_path).read_bytes())
+    )
+
+
+def generate_config_from_data(data: dict) -> dict:
+    """Generate LiteLLM config from one parsed agent-config snapshot."""
 
     model_strings = set()
     file_settings = data.get("file_settings", {})
@@ -225,6 +237,12 @@ def generate_config(agent_config_path: str) -> dict:
         "litellm_settings": litellm_settings,
         "router_settings": router_settings
     }
+
+
+def generate_config(agent_config_path: str) -> dict:
+    return generate_config_from_data(
+        parse_agent_config(Path(agent_config_path).read_bytes())
+    )
 
 def main():
     parser = argparse.ArgumentParser(description="Generate LiteLLM Router config from agent-config.yml")

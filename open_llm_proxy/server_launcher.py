@@ -18,16 +18,23 @@ from open_llm_proxy.callbacks import (
     GeminiThinkingBudgetCallback,
     ServedByCallback,
 )
-from open_llm_proxy.config_gen import configured_model_tokens, generate_config
+from open_llm_proxy.config_gen import (
+    configured_model_tokens,
+    configured_model_tokens_from_data,
+    generate_config_from_data,
+    parse_agent_config,
+)
 from open_llm_proxy.rate_limit_state import (
     PersistentRateLimitCallback,
     load_rate_limit_policy,
+    load_rate_limit_policy_from_data,
 )
 from open_llm_proxy.streaming_safety import (
     install_non_stream_attribution,
     install_pre_first_chunk_fallback_only,
 )
 from open_llm_proxy.gemini_isolation import install_gemini_shared_state_isolation
+from open_llm_proxy.reloader import ConfigReloader
 print("SERVER_LAUNCHER: All imports done.", flush=True)
 
 log = logging.getLogger("open_llm_proxy.server_launcher")
@@ -61,6 +68,40 @@ def register_attribution_endpoint(app):
         )
 
     return get_attribution
+
+
+def register_config_reload_endpoint(app, config_reloader):
+    """Register loopback-only routing reload endpoint."""
+    from fastapi import HTTPException, Request
+
+    @app.post("/internal/config/reload")
+    async def reload_config(request: Request):
+        if not request.client or request.client.host not in ("127.0.0.1", "::1"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        try:
+            payload = await request.json()
+        except Exception as error:
+            raise HTTPException(status_code=400, detail="Invalid JSON") from error
+
+        expected_hash = payload.get("expected_hash") if isinstance(payload, dict) else None
+        if (
+            not isinstance(expected_hash, str)
+            or len(expected_hash) != 64
+            or any(char not in "0123456789abcdef" for char in expected_hash)
+        ):
+            raise HTTPException(status_code=400, detail="Invalid expected_hash")
+
+        applied = await config_reloader.reload(expected_hash=expected_hash)
+        if not applied or config_reloader.active_hash != expected_hash:
+            raise HTTPException(
+                status_code=409,
+                detail="Routing config reload rejected; full restart required",
+            )
+
+        return {"status": "ok", "config_hash": config_reloader.active_hash}
+
+    return reload_config
 
 # ---------------------------------------------------------------------------
 # Stable config lifecycle  — replaces ephemeral NamedTemporaryFile path
@@ -121,19 +162,28 @@ def write_config_atomic(config_dict: dict, path: str | Path | None = None) -> st
         raise
     return str(path)
 
-def setup_callbacks(config_path: str | Path | None = None):
+def setup_callbacks(
+    config_path: str | Path | None = None, *, config_data: dict | None = None
+):
     """Register request transforms and persistent rate-limit tracking."""
     install_pre_first_chunk_fallback_only()
     install_gemini_shared_state_isolation()
     if not hasattr(litellm, "callbacks") or litellm.callbacks is None:
         litellm.callbacks = []
 
-    if config_path is not None and not any(
-        isinstance(c, PersistentRateLimitCallback) for c in litellm.callbacks
-    ):
-        policy = load_rate_limit_policy(config_path)
-        policy["model_keys"] = configured_model_tokens(config_path)
-        litellm.callbacks.append(PersistentRateLimitCallback(**policy))
+    rate_limit_callback = next(
+        (c for c in litellm.callbacks if isinstance(c, PersistentRateLimitCallback)),
+        None,
+    )
+    if (config_path is not None or config_data is not None) and rate_limit_callback is None:
+        if config_data is not None:
+            policy = load_rate_limit_policy_from_data(config_data)
+            policy["model_keys"] = configured_model_tokens_from_data(config_data)
+        else:
+            policy = load_rate_limit_policy(config_path)
+            policy["model_keys"] = configured_model_tokens(config_path)
+        rate_limit_callback = PersistentRateLimitCallback(**policy)
+        litellm.callbacks.append(rate_limit_callback)
         log.info("PersistentRateLimitCallback registered.")
     
     # Register Gemini thinking budget callback
@@ -153,6 +203,8 @@ def setup_callbacks(config_path: str | Path | None = None):
     if not any(isinstance(c, ServedByCallback) for c in litellm.callbacks):
         litellm.callbacks.append(ServedByCallback())
         log.info("ServedByCallback registered.")
+
+    return rate_limit_callback
 
 def find_agent_config() -> Path:
     """
@@ -250,11 +302,13 @@ def launch_server(
     # ALWAYS ensure LITELLM_MASTER_KEY is set in env before importing proxy_server
     os.environ["LITELLM_MASTER_KEY"] = resolved_master_key
 
-    print("SERVER_LAUNCHER: Calling setup_callbacks()...", flush=True)
-    setup_callbacks(config_path)
-
     print(f"Generating LiteLLM config from: {config_path}", flush=True)
-    config_dict = generate_config(str(config_path))
+    config_source = config_path.read_bytes()
+    config_data = parse_agent_config(config_source)
+    config_dict = generate_config_from_data(config_data)
+
+    print("SERVER_LAUNCHER: Calling setup_callbacks()...", flush=True)
+    rate_limit_callback = setup_callbacks(config_data=config_data)
 
     # Keep each process's config available for LiteLLM scheduler re-reads.
     stable_config_path = write_config_atomic(config_dict)
@@ -296,13 +350,23 @@ def launch_server(
         install_usage_reporting(app)
         from open_llm_proxy.model_chain_middleware import install_model_chain_middleware
         install_model_chain_middleware(app)
+
+        config_reloader = ConfigReloader(
+            source_path=config_path,
+            generated_path=stable_config_path,
+            initial_source=config_source,
+            initial_config=config_dict,
+            write_config=write_config_atomic,
+            rate_limit_callback=rate_limit_callback,
+        )
         
         # Add healthz endpoint for sync-agents validation
         @app.get("/healthz")
         async def healthz():
-            return {"status": "ok"}
+            return {"status": "ok", "config_hash": config_reloader.active_hash}
 
         register_attribution_endpoint(app)
+        register_config_reload_endpoint(app, config_reloader)
         
         if ui_disabled:
             from fastapi import Response
