@@ -107,7 +107,7 @@ async def test_stream_messages_401_retry():
         assert len(events) == 1
         assert events[0][0] == "message_start"
         assert mock_refresh.call_count == 1
-        mock_refresh.assert_called_with(stale_token="sk-ant-api03-old")
+        mock_refresh.assert_called_with(stale_token="sk-ant-api03-old", account=None)
 
 
 @pytest.mark.anyio

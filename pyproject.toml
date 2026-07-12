@@ -15,7 +15,8 @@ dependencies = [
     "litellm[proxy]",
     "prisma",
     "httpx[http2]",
-    "pyyaml"
+    "pyyaml",
+    "questionary>=2.0.0"
 ]
 
 [project.scripts]

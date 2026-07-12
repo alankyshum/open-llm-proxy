@@ -53,20 +53,20 @@ def _headers(key: str) -> dict[str, str]:
     return headers
 
 
-async def stream_messages(payload: dict[str, Any]) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+async def stream_messages(payload: dict[str, Any], *, account: str | None = None) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     client = _get_client()
     attempts = 2
     for attempt in range(attempts):
         retry_needed = False
-        key = creds.get_api_key()
+        key = creds.get_api_key(account=account)
         headers = _headers(key)
 
         async with client.stream("POST", API_URL, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
                 body = (await resp.aread()).decode("utf-8", errors="replace")[:2000]
                 if resp.status_code == 401 and attempt < attempts - 1:
-                    creds.clear_cache()
-                    creds.refresh_anthropic_oauth(stale_token=key)
+                    creds.clear_cache(account=account)
+                    creds.refresh_anthropic_oauth(stale_token=key, account=account)
                     retry_needed = True
                 else:
                     if resp.status_code == 429:
@@ -111,27 +111,27 @@ async def stream_messages(payload: dict[str, Any]) -> AsyncIterator[tuple[str, d
             break
 
 
-async def send_messages(payload: dict[str, Any]) -> dict[str, Any]:
+async def send_messages(payload: dict[str, Any], *, account: str | None = None) -> dict[str, Any]:
     client = _get_client()
     body = dict(payload)
     body["stream"] = False
     attempts = 2
     for attempt in range(attempts):
-        key = creds.get_api_key()
+        key = creds.get_api_key(account=account)
         headers = _headers(key)
         headers["accept"] = "application/json"
 
         resp = await client.post(API_URL, headers=headers, json=body)
         if resp.status_code >= 400:
             if resp.status_code == 401 and attempt < attempts - 1:
-                creds.clear_cache()
-                creds.refresh_anthropic_oauth(stale_token=key)
+                creds.clear_cache(account=account)
+                creds.refresh_anthropic_oauth(stale_token=key, account=account)
                 continue
             raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text}")
         return resp.json()
 
 
-async def fetch_models() -> list[dict[str, Any]]:
+async def fetch_models(*, account: str | None = None) -> list[dict[str, Any]]:
     client = _get_client()
     url = "https://api.anthropic.com/v1/models"
 
@@ -147,15 +147,15 @@ async def fetch_models() -> list[dict[str, Any]]:
 
         attempts = 1 if refreshed_at_least_once else 2
         for attempt in range(attempts):
-            key = creds.get_api_key()
+            key = creds.get_api_key(account=account)
             headers = _headers(key)
             headers["accept"] = "application/json"
 
             resp = await client.get(url, headers=headers, params=params)
             if resp.status_code >= 400:
                 if resp.status_code == 401 and attempt == 0 and not refreshed_at_least_once:
-                    creds.clear_cache()
-                    creds.refresh_anthropic_oauth(stale_token=key)
+                    creds.clear_cache(account=account)
+                    creds.refresh_anthropic_oauth(stale_token=key, account=account)
                     refreshed_at_least_once = True
                     continue
                 if resp.status_code == 429:

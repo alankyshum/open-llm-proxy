@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from open_llm_proxy import connectivity
 
 def test_check_provider_openrouter(monkeypatch):
-    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda: "fake-key")
+    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key")
 
     def mock_send(request: httpx.Request):
         assert request.url.host == "openrouter.ai"
@@ -37,7 +37,7 @@ def test_check_provider_opencode(monkeypatch):
     assert status == "Ready"
 
 def test_check_provider_claude_cli(monkeypatch):
-    monkeypatch.setattr("open_llm_proxy.creds.get_api_key", lambda: "fake-claude-key")
+    monkeypatch.setattr("open_llm_proxy.creds.get_api_key", lambda account=None: "fake-claude-key")
 
     def mock_send(request: httpx.Request):
         assert request.url.host == "api.anthropic.com"
@@ -81,7 +81,7 @@ def test_check_provider_copilot(monkeypatch):
     ]
 )
 def test_check_provider_error_statuses(monkeypatch, status_code, expected_ok, expected_status):
-    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda: "fake-key")
+    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key")
 
     def mock_send(request: httpx.Request):
         return httpx.Response(status_code, text="sensitive error details or secrets in response body")
@@ -94,7 +94,7 @@ def test_check_provider_error_statuses(monkeypatch, status_code, expected_ok, ex
     assert status == expected_status
 
 def test_check_provider_timeout(monkeypatch):
-    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda: "fake-key")
+    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key")
 
     def mock_send(request: httpx.Request):
         raise httpx.TimeoutException("mock timeout")
@@ -107,7 +107,7 @@ def test_check_provider_timeout(monkeypatch):
     assert status == "Timeout"
 
 def test_check_provider_connection_failed(monkeypatch):
-    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda: "fake-key")
+    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key")
 
     def mock_send(request: httpx.Request):
         raise httpx.ConnectError("mock connection failed")
@@ -118,3 +118,69 @@ def test_check_provider_connection_failed(monkeypatch):
     ok, status = connectivity.check_provider("openrouter")
     assert ok is False
     assert status == "Connection Failed"
+
+
+# ---- HIGH — account parameter on check_provider -------------------------------
+
+
+def test_check_provider_claude_cli_named(monkeypatch):
+    """check_provider('claude-cli', account='work') passes account to
+    creds.get_api_key."""
+    captured = []
+
+    def fake_get_key(account=None):
+        captured.append(account)
+        return "sk-ant-named-key"
+
+    monkeypatch.setattr("open_llm_proxy.creds.get_api_key", fake_get_key)
+
+    from open_llm_proxy import anthropic_client
+
+    monkeypatch.setattr("open_llm_proxy.anthropic_client._headers", lambda key: {"x-api-key": key})
+
+    def mock_send(request: httpx.Request):
+        assert request.headers["x-api-key"] == "sk-ant-named-key"
+        return httpx.Response(200, json={})
+
+    transport = httpx.MockTransport(mock_send)
+    monkeypatch.setattr("httpx.Client._transport_for_url", lambda self, url: transport)
+
+    ok, status = connectivity.check_provider("claude-cli", account="work")
+    assert ok is True
+    assert status == "Ready"
+    assert captured == ["work"]
+
+
+def test_check_provider_copilot_named_unsupported(monkeypatch):
+    """check_provider('github-copilot', account='work') returns unsupported."""
+    ok, status = connectivity.check_provider("github-copilot", account="work")
+    assert ok is False
+    assert status == "unsupported (named account)"
+
+
+def test_check_provider_opencode_named_unsupported(monkeypatch):
+    """check_provider('opencode', account='work') returns unsupported."""
+    ok, status = connectivity.check_provider("opencode", account="work")
+    assert ok is False
+    assert status == "unsupported (named account)"
+
+
+# ---- HIGH — named account with no stored secret returns Missing Credentials ---
+
+
+def test_check_provider_openrouter_named_no_secret(monkeypatch):
+    """check_provider('openrouter', account='ghost') with no stored secret
+    returns (False, 'Missing Credentials') — no crash, no env-key success."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    ok, status = connectivity.check_provider("openrouter", account="ghost")
+    assert ok is False
+    assert status == "Missing Credentials"
+
+
+def test_check_provider_nvidia_named_no_secret(monkeypatch):
+    """check_provider('nvidia', account='ghost') with no stored secret
+    returns (False, 'Missing Credentials') — no crash, no env-key success."""
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    ok, status = connectivity.check_provider("nvidia", account="ghost")
+    assert ok is False
+    assert status == "Missing Credentials"

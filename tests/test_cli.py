@@ -185,17 +185,20 @@ def test_auth_all_ok(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_nvidia", lambda: (True, "credential discoverable"))
 
     sub_calls = []
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: sub_calls.append(args))
 
-    assert cli.main(["auth"]) == 0
+    # --no-tui ensures orchestrator path is used even when stdin is a TTY
+    assert cli.main(["auth", "--no-tui"]) == 0
     assert not sub_calls
     out = capsys.readouterr().out
     assert "[OK] openrouter: credential discoverable" in out
     assert "[OK] opencode: credential discoverable" in out
     assert "[OK] github-copilot: credential discoverable" in out
     assert "[OK] claude-cli: credential discoverable" in out
+    assert "[OK] nvidia: credential discoverable" in out
 
 
 def test_auth_openrouter_piped(monkeypatch, capsys):
@@ -205,6 +208,7 @@ def test_auth_openrouter_piped(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_nvidia", lambda: (True, "credential discoverable"))
 
     saved_keys = []
     import open_llm_proxy.openrouter_creds
@@ -214,7 +218,7 @@ def test_auth_openrouter_piped(monkeypatch, capsys):
     monkeypatch.setattr(cli.sys, "stdin", fake_stdin)
     monkeypatch.setattr(fake_stdin, "isatty", lambda: False)
 
-    assert cli.main(["auth"]) == 0
+    assert cli.main(["auth", "--no-tui"]) == 0
     assert saved_keys == ["piped_secret_key"]
     out = capsys.readouterr().out
     assert "piped_secret_key" not in out
@@ -228,6 +232,7 @@ def test_auth_openrouter_tty(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_nvidia", lambda: (True, "credential discoverable"))
 
     saved_keys = []
     import open_llm_proxy.openrouter_creds
@@ -240,7 +245,7 @@ def test_auth_openrouter_tty(monkeypatch, capsys):
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("getpass.getpass", lambda prompt: "tty_secret_key")
 
-    assert cli.main(["auth"]) == 0
+    assert cli.main(["auth", "--no-tui"]) == 0
     assert saved_keys == ["tty_secret_key"]
     out = capsys.readouterr().out
     assert "tty_secret_key" not in out
@@ -253,18 +258,25 @@ def test_auth_openrouter_empty(monkeypatch, capsys):
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
     monkeypatch.setattr(cli.sys, "stdin", io.StringIO("   \n"))
 
-    assert cli.main(["auth"]) == 1
+    assert cli.main(["auth", "--no-tui"]) == 1
     err = capsys.readouterr().err
     assert "Error: OpenRouter API key cannot be empty" in err
 
 
-def test_auth_opencode_login(monkeypatch, capsys):
+def _stub_all_check_ok(monkeypatch) -> None:
+    """Stub all _check_* functions to return found."""
     monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
-    
-    op_ok = [False]
-    monkeypatch.setattr(cli, "_check_opencode", lambda: (op_ok[0], "missing" if not op_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_nvidia", lambda: (True, "credential discoverable"))
+
+
+def test_auth_opencode_login(monkeypatch, capsys):
+    _stub_all_check_ok(monkeypatch)
+
+    op_ok = [False]
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (op_ok[0], "missing" if not op_ok[0] else "credential discoverable"))
 
     sub_calls = []
     def mock_run(cmd, **kwargs):
@@ -274,7 +286,7 @@ def test_auth_opencode_login(monkeypatch, capsys):
 
     monkeypatch.setattr(cli.subprocess, "run", mock_run)
 
-    assert cli.main(["auth"]) == 0
+    assert cli.main(["auth", "--no-tui"]) == 0
     assert sub_calls == [["opencode", "auth", "login", "https://opencode.ai"]]
     out = capsys.readouterr().out
     assert "[OK] opencode: credential discoverable" in out
@@ -323,12 +335,10 @@ def test_auth_opencode_unresolved(monkeypatch, capsys):
 
 
 def test_auth_github_copilot_login(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
-    monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
-    
+    _stub_all_check_ok(monkeypatch)
+
     cop_ok = [False]
     monkeypatch.setattr(cli, "_check_github_copilot", lambda: (cop_ok[0], "missing" if not cop_ok[0] else "credential discoverable"))
-    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
 
     sub_calls = []
     def mock_run(cmd, **kwargs):
@@ -338,17 +348,15 @@ def test_auth_github_copilot_login(monkeypatch, capsys):
 
     monkeypatch.setattr(cli.subprocess, "run", mock_run)
 
-    assert cli.main(["auth"]) == 0
+    assert cli.main(["auth", "--no-tui"]) == 0
     assert sub_calls == [["opencode", "auth", "login", "https://github.com"]]
     out = capsys.readouterr().out
     assert "[OK] github-copilot: credential discoverable" in out
 
 
 def test_auth_claude_cli_login(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
-    monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
-    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
-    
+    _stub_all_check_ok(monkeypatch)
+
     cl_ok = [False]
     monkeypatch.setattr(cli, "_check_claude_cli", lambda: (cl_ok[0], "missing" if not cl_ok[0] else "credential discoverable"))
 
@@ -360,7 +368,7 @@ def test_auth_claude_cli_login(monkeypatch, capsys):
 
     monkeypatch.setattr(cli.subprocess, "run", mock_run)
 
-    assert cli.main(["auth"]) == 0
+    assert cli.main(["auth", "--no-tui"]) == 0
     assert sub_calls == [["claude", "auth", "login"]]
     out = capsys.readouterr().out
     assert "[OK] claude-cli: credential discoverable" in out
@@ -374,6 +382,7 @@ def test_auth_check_command(monkeypatch, capsys):
         "opencode": (False, "Authentication Failed"),
         "github-copilot": (True, "Ready"),
         "claude-cli": (True, "Ready"),
+        "nvidia": (True, "Ready"),
     }
     def mock_check(p):
         checked_providers.append(p)
@@ -382,7 +391,7 @@ def test_auth_check_command(monkeypatch, capsys):
     monkeypatch.setattr(connectivity, "check_provider", mock_check)
 
     assert cli.main(["auth", "check"]) == 1
-    assert checked_providers == ["openrouter", "opencode", "github-copilot", "claude-cli"]
+    assert checked_providers == ["openrouter", "opencode", "github-copilot", "claude-cli", "nvidia"]
     captured = capsys.readouterr()
     assert "[FAILED] opencode: Authentication Failed" in captured.err
     assert "[OK] openrouter: Ready" in captured.out

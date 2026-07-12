@@ -65,3 +65,14 @@ async def test_rewrite_model_chain_middleware():
     # Case 6: existing internal alias is unchanged.
     internal = b'{"model":"[a/b;c/d]"}'
     assert rewrite_model_chain_body(internal) == internal
+
+    # Case 7: @account tokens in a chain round-trip with @ preserved and commas replaced by semicolons
+    payload = {
+        "model": "open-llm-proxy/[claude-cli@work/claude-opus-4-8,claude-cli@home/claude-opus-4-8,github-copilot/claude-opus-4.8]",
+        "messages": [{"role": "user", "content": "hi"}]
+    }
+    response = client.post("/v1/chat/completions", json=payload)
+    assert response.status_code == 200
+    assert response.json()["model"] == (
+        "[claude-cli@work/claude-opus-4-8;claude-cli@home/claude-opus-4-8;github-copilot/claude-opus-4.8]"
+    )

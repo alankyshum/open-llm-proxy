@@ -107,48 +107,109 @@ GitHub Copilot, Gemini API tiers, OpenRouter, and OpenCode Zen. Catalog entries
 include their source URL and verification date; Gemini's model/project-specific
 limits link to AI Studio because Google does not publish one fixed static quota.
 
-## Authentication
+## Authentication & accounts
 
-Manage and verify credentials for the supported LLM providers:
-
-```bash
-open-llm-proxy auth
-open-llm-proxy auth set <provider>
-open-llm-proxy auth check [provider]
-```
-
-Credential setup should follow this preferred provider ordering:
-1. `openrouter`
-2. `opencode`
-3. `github-copilot`
-4. `claude-cli`
-
-### Interactive credential entry
-
-When setting keys (especially for `openrouter`), secrets are always acquired via a hidden prompt or piped stdin. They must **never** be passed via command-line arguments (`argv`) to avoid leaking credentials to shell history or process listings:
+Manage credentials for providers the router uses. The system supports
+**multiple named accounts per provider** with independent rate-limit buckets.
 
 ```bash
-# Using interactive hidden prompt
-open-llm-proxy auth set openrouter
-
-# Or piping stdin
-echo "sk-or-..." | open-llm-proxy auth set openrouter
+open-llm-proxy auth                          # interactive TUI (TTY)
+open-llm-proxy auth --no-tui                 # fallback numbered prompt
+open-llm-proxy auth add openrouter           # add first (default) account
+open-llm-proxy auth add nvidia --name prod   # add a named account
+open-llm-proxy auth accounts                 # list all accounts
+open-llm-proxy auth accounts claude-cli      # list one provider's accounts
+open-llm-proxy auth use claude-cli work      # switch active account
+open-llm-proxy auth rename openrouter default work   # rename (needs ≥2)
+open-llm-proxy auth remove nvidia prod       # remove an account
+open-llm-proxy auth remove nvidia default --force    # force-remove last
+open-llm-proxy auth check                    # live probe all providers
+open-llm-proxy auth check openrouter         # probe one provider
 ```
 
-### Checking status
+Secrets are always acquired via a hidden prompt, piped stdin, or an external
+OAuth helper — **never** passed as command-line arguments.
 
-Validate configured credentials with the check command:
+### Interactive TUI
 
-```bash
-# Check all providers
-open-llm-proxy auth check
+Running `open-llm-proxy auth` with a TTY opens an interactive menu
+(powered by `questionary`, a base dependency). Pick a provider from the
+list, paste an API key (hidden input) or launch an OAuth login helper.
+Account naming is only prompted when a second account already exists.
 
-# Check a specific provider
-open-llm-proxy auth check openrouter
+Use `--no-tui` to skip the TUI and get the original numbered-prompt flow,
+or pipe stdin for scripting.
+
+### Multi-account model
+
+Each provider credential lives under a **named account**:
+
+- **First account** per provider is auto-named `default`.
+- **Add more** with `auth add <provider> --name <name>`.
+  `--name` is required when the provider already has accounts.
+- **List** with `auth accounts [provider]`. The active account is marked
+  with `*`.
+- **Switch active** with `auth use <provider> <name>`.
+- **Rename** with `auth rename <provider> <old> <new>` — only allowed once
+  a second account exists for that provider.
+- **Remove** with `auth remove <provider> <name>`. Removing the last
+  account requires `--force`.
+
+> The legacy `auth set <provider>` still works for quick single-account
+> setup but does not support named accounts. Prefer `auth add <provider>`
+> or the interactive TUI.
+
+### Token syntax: `provider@account/model`
+
+In agent-config chains, include the account with an `@` suffix on the
+provider:
+
+```
+open-llm-proxy/[claude-cli@work/claude-opus-4-8,claude-cli@home/claude-opus-4-8,github-copilot/claude-opus-4.8]
 ```
 
-The credential check performs live, read-only validation calls to the provider's API to verify that the credentials are valid and active without executing paid/state-modifying operations.
+- **Absent `@account`** → the provider's active account (or `default`)
+  is used.
+- **Each account is a separate deployment** with its own rate-limit bucket
+  and failover slot.
+
+### Supported providers
+
+| Provider | Auth kind | Command example |
+|---|---|---|
+| OpenRouter | api-key | `auth add openrouter` |
+| NVIDIA (NIM) | api-key | `auth add nvidia` |
+| OpenCode | oauth-cli | `auth add opencode` |
+| GitHub Copilot | oauth-cli | `auth add github-copilot` |
+| Claude CLI | oauth-cli | `auth add claude-cli` |
+
+`nvidia` is now a first-class provider — `auth add nvidia` persists your
+key via the shared env-file writer. The older `NVIDIA_API_KEY` environment
+variable still works and is automatically imported as the `default` account
+on first auth invocation.
+
+### Credential check
+
+`auth check` performs live, read-only validation calls to each provider's
+API to verify credentials are valid without executing paid or state-modifying
+operations.
+
+### Storage
+
+- **Registry**: `~/.config/open-llm-proxy/accounts.json` (0600) — metadata
+  only (no secrets).
+- **Secrets**: Per-account files under
+  `~/.config/open-llm-proxy/accounts/<provider>/<name>.<ext>` (0600).
+- **Override**: Set `OLP_CONFIG_DIR` to use a different base directory
+  (useful for testing).
+
+On first `auth` invocation, **existing credentials** are automatically
+discovered and imported as `default` accounts — one-time, non-destructive,
+per-provider. No credential is deleted or moved.
 
 ### Restart requirement
 
-After updating or setting credentials, **restart the proxy** to load the new credentials into the running environment.
+After changing credentials for an **api-key** provider (OpenRouter, NVIDIA)
+stored in `~/.config/open-llm-proxy/env`, restart the proxy
+(`open-llm-proxy restart`) so the updated env file is loaded. OAuth
+provider credentials are read at runtime and take effect immediately.

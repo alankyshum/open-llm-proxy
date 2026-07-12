@@ -25,6 +25,12 @@ from open_llm_proxy.rate_limit_catalog import (
 
 log = logging.getLogger("open_llm_proxy.rate_limit_state")
 
+
+def base_provider(provider: str) -> str:
+    """Strip optional @account suffix, returning the bare provider name."""
+    return provider.split("@", 1)[0]
+
+
 _DEFAULT_DATABASE_PATH = (
     Path.home() / ".config" / "open-llm-proxy" / "state.sqlite3"
 )
@@ -84,7 +90,8 @@ class RateLimitStore:
         self._plans: dict[str, tuple[str, PlanPolicy]] = {}
         if configured_plans is not None:
             for provider, plan_name in configured_plans.items():
-                self._plans[provider] = (plan_name, get_plan_policy(provider, plan_name))
+                bp = base_provider(provider)
+                self._plans[bp] = (plan_name, get_plan_policy(bp, plan_name))
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -135,14 +142,15 @@ class RateLimitStore:
                 )
 
     def _resolve(self, provider: str) -> tuple[str, PlanPolicy]:
-        if provider in self._plans:
-            return self._plans[provider]
+        key = base_provider(provider)
+        if key in self._plans:
+            return self._plans[key]
         try:
-            plan_name = DEFAULT_PLANS[provider]
+            plan_name = DEFAULT_PLANS[key]
         except KeyError as exc:
             raise ValueError(f"no rate-limit policy for provider {provider}") from exc
-        policy = get_plan_policy(provider, plan_name)
-        self._plans[provider] = (plan_name, policy)
+        policy = get_plan_policy(key, plan_name)
+        self._plans[key] = (plan_name, policy)
         return plan_name, policy
 
     def configured_plan(self, provider: str) -> tuple[str, PlanPolicy]:
@@ -303,7 +311,7 @@ def _rate_limit_key_for_exception(
     if not isinstance(metadata_key, str) or "/" not in metadata_key:
         return None
 
-    provider = metadata_key.split("/", 1)[0]
+    provider = base_provider(metadata_key.split("/", 1)[0])
     exception_provider = getattr(exception, "llm_provider", None)
     if not isinstance(exception_provider, str) or not exception_provider:
         return None

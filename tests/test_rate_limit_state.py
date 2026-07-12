@@ -8,6 +8,7 @@ from open_llm_proxy.config_gen import generate_config
 from open_llm_proxy.rate_limit_state import (
     PersistentRateLimitCallback,
     RateLimitStore,
+    base_provider,
     load_rate_limit_policy,
 )
 
@@ -363,3 +364,56 @@ async def test_non_rate_limit_does_not_create_event(tmp_path):
     with sqlite3.connect(callback.store.database_path) as connection:
         count = connection.execute("SELECT COUNT(*) FROM rate_limits").fetchone()[0]
     assert count == 0
+
+
+def test_base_provider():
+    assert base_provider("claude-cli@work") == "claude-cli"
+    assert base_provider("claude-cli") == "claude-cli"
+    assert base_provider("openrouter@default") == "openrouter"
+    assert base_provider("") == ""
+
+
+def test_account_providers_have_independent_rate_limit_rows(tmp_path):
+    store = RateLimitStore(tmp_path / "state.sqlite3")
+    store.register_models([
+        "claude-cli@work/claude-opus-4-8",
+        "claude-cli@home/claude-opus-4-8",
+    ])
+
+    rows = store.inventory()
+    assert len(rows) == 2
+    providers = {r["provider"] for r in rows}
+    assert providers == {"claude-cli@home", "claude-cli@work"}
+
+    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    store.record_rate_limit(
+        "claude-cli@work/claude-opus-4-8",
+        occurred_at=now,
+        retry_at=now + timedelta(hours=5),
+        retry_source="test",
+    )
+
+    assert store.retry_at("claude-cli@work/claude-opus-4-8") is not None
+    assert store.retry_at("claude-cli@home/claude-opus-4-8") is None
+
+
+def test_account_providers_resolve_same_plan_policy(tmp_path):
+    store = RateLimitStore(
+        tmp_path / "state.sqlite3",
+        configured_plans={"claude-cli": "pro"},
+    )
+    plan_work, policy_work = store.configured_plan("claude-cli@work")
+    plan_home, policy_home = store.configured_plan("claude-cli@home")
+    assert plan_work == plan_home == "pro"
+    assert policy_work is policy_home  # same cached object
+
+
+def test_configured_plan_applies_to_account_provider(tmp_path):
+    store = RateLimitStore(
+        tmp_path / "state.sqlite3",
+        configured_plans={"claude-cli": "pro"},
+    )
+    plan_name, policy = store.configured_plan("claude-cli@work")
+    assert plan_name == "pro"
+    assert policy.default_cooldown_seconds == 5 * 60 * 60  # 5 hours
+    assert policy.quota_limited is True

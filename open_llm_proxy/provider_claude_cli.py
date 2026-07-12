@@ -128,10 +128,17 @@ class ClaudeCliLLM(CustomLLM):
         model = kwargs.get("model") or (args[0] if len(args) > 0 else "")
         messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
         optional_params = kwargs.get("optional_params") or {}
+        litellm_params = kwargs.get("litellm_params") or {}
         
         tools = kwargs.get("tools") or optional_params.get("tools")
         max_tokens = kwargs.get("max_tokens") or optional_params.get("max_tokens")
         temperature = kwargs.get("temperature") or optional_params.get("temperature")
+        
+        account = (
+            kwargs.get("claude_account")
+            or optional_params.get("claude_account")
+            or litellm_params.get("claude_account")
+        )
         
         model_str = model
         if model_str.startswith("claude-cli/"):
@@ -162,7 +169,7 @@ class ClaudeCliLLM(CustomLLM):
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         
         try:
-            async for event_name, event_data in anthropic_client.stream_messages(payload):
+            async for event_name, event_data in anthropic_client.stream_messages(payload, account=account):
                 chunks = translator.anthropic_event_to_openai_chunks(
                     event_name, event_data,
                     completion_id=completion_id, model=base_model, state=state,
@@ -186,8 +193,9 @@ class ClaudeCliLLM(CustomLLM):
             }
         except Exception as e:
             from open_llm_proxy.errors import map_rate_limit_error
+            rate_limit_key = f"claude-cli@{account}/{model_str}" if account else f"claude-cli/{model_str}"
             raise map_rate_limit_error(
-                e, rate_limit_origin_key=f"claude-cli/{model_str}"
+                e, rate_limit_origin_key=rate_limit_key
             )
 
     def completion(self, *args, **kwargs) -> ModelResponse:
@@ -203,10 +211,17 @@ class ClaudeCliLLM(CustomLLM):
         model = kwargs.get("model") or (args[0] if len(args) > 0 else "")
         messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
         optional_params = kwargs.get("optional_params") or {}
+        litellm_params = kwargs.get("litellm_params") or {}
         
         tools = kwargs.get("tools") or optional_params.get("tools")
         max_tokens = kwargs.get("max_tokens") or optional_params.get("max_tokens")
         temperature = kwargs.get("temperature") or optional_params.get("temperature")
+        
+        account = (
+            kwargs.get("claude_account")
+            or optional_params.get("claude_account")
+            or litellm_params.get("claude_account")
+        )
         
         model_str = model
         if model_str.startswith("claude-cli/"):
@@ -225,12 +240,13 @@ class ClaudeCliLLM(CustomLLM):
         )
         
         try:
-            raw_response = await anthropic_client.send_messages(payload)
+            raw_response = await anthropic_client.send_messages(payload, account=account)
             return anthropic_response_to_model_response(raw_response, model)
         except Exception as e:
             from open_llm_proxy.errors import map_rate_limit_error
+            rate_limit_key = f"claude-cli@{account}/{model_str}" if account else f"claude-cli/{model_str}"
             raise map_rate_limit_error(
-                e, rate_limit_origin_key=f"claude-cli/{model_str}"
+                e, rate_limit_origin_key=rate_limit_key
             )
 
 

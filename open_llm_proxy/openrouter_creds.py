@@ -1,107 +1,110 @@
 from __future__ import annotations
 
 import os
-import shlex
-import tempfile
 from pathlib import Path
 
-
-def _env_file() -> Path:
-    return Path.home() / ".config" / "open-llm-proxy" / "env"
+from open_llm_proxy import env_creds
 
 
-def get_persisted_api_key() -> str:
-    """Read the OpenRouter key available to the background service."""
-    env_file = _env_file()
-    if env_file.is_file():
-        content = env_file.read_text(encoding="utf-8")
-        for line in content.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("export "):
-                line = line[len("export "):].strip()
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            if key.strip() != "OPENROUTER_API_KEY":
-                continue
-            parsed = shlex.split(value.strip())
-            if parsed and parsed[0].strip():
-                return parsed[0].strip()
-
-    raise RuntimeError("OPENROUTER_API_KEY is absent from ~/.config/open-llm-proxy/env")
+ENV_KEY = "OPENROUTER_API_KEY"
 
 
-def get_api_key() -> str:
-    """Reads OPENROUTER_API_KEY from environment or parses ~/.config/open-llm-proxy/env.
-    Raises RuntimeError if absent.
+def _resolve_account_key(account: str | None) -> str | None:
+    """Read key for *account* from a per-account secret file, or ``None``."""
+    if account is None:
+        return None
+    try:
+        from open_llm_proxy import account_registry
+
+        ref = account_registry.resolve_secret_ref("openrouter", account)
+        if isinstance(ref, Path) and ref.exists():
+            secret = ref.read_bytes()
+            if secret and secret.strip():
+                return secret.decode().strip()
+    except Exception:
+        pass
+    return None
+
+
+def get_persisted_api_key(account: str | None = None) -> str:
+    """Read the OpenRouter key from env file or per-account secret.
+
+    When *account* is a named account with a file-backed credential,
+    reads from that file.  Otherwise reads from the shared env file
+    (``@default`` / legacy path).
+
+    Raises ``RuntimeError`` if absent.
     """
-    key = os.environ.get("OPENROUTER_API_KEY")
+    if account is not None:
+        key = _resolve_account_key(account)
+        if key:
+            return key
+        if account != "default":
+            raise RuntimeError(
+                f"OpenRouter account {account!r} has no stored credential"
+            )
+    # Fall through to shared env file (None or "default" only)
+    key = _read_env_file(ENV_KEY)
     if key and key.strip():
         return key.strip()
+    raise RuntimeError(f"{ENV_KEY} is absent from env file")
 
-    return get_persisted_api_key()
+
+def get_api_key(account: str | None = None) -> str:
+    """Reads OPENROUTER_API_KEY from environment, env file, or per-account file.
+
+    *account* selects a named per-account secret.  When ``None`` uses the
+    active/default credential (env var → env file).
+
+    Raises ``RuntimeError`` if absent.
+    """
+    if account is not None:
+        key = _resolve_account_key(account)
+        if key:
+            return key
+        if account != "default":
+            raise RuntimeError(
+                f"OpenRouter account {account!r} has no stored credential"
+            )
+    key = os.environ.get(ENV_KEY)
+    if key and key.strip():
+        return key.strip()
+    # Fall through to persisted (file-only) lookup
+    return get_persisted_api_key(account=None)
 
 
 def save_api_key(key: str) -> None:
-    """Atomically updates/adds OPENROUTER_API_KEY=... to ~/.config/open-llm-proxy/env,
-    preserving unrelated lines and setting file permissions to 0600.
+    """Atomically set OPENROUTER_API_KEY=... in the env file (0600)."""
+    env_creds.set_env_key(ENV_KEY, key)
+
+
+# ---- internal helpers ---------------------------------------------------------
+
+
+def _read_env_file(name: str) -> str | None:
+    """Parse the env file for *name*, returning its value or ``None``.
+
+    Ignores the shell environment — purely file-based.
     """
-    if not key:
-        raise ValueError("API key cannot be empty")
-    if "\n" in key or "\r" in key:
-        raise ValueError("API key cannot contain newline characters")
+    import shlex
+    from pathlib import Path
 
-    env_file = _env_file()
-    env_file.parent.mkdir(parents=True, exist_ok=True)
-
-    quoted_key = shlex.quote(key)
-    new_line = f"OPENROUTER_API_KEY={quoted_key}"
-
-    lines: list[str] = []
-    found = False
-
-    if env_file.is_file():
-        content = env_file.read_text(encoding="utf-8")
-        for line in content.splitlines():
-            stripped = line.strip()
-            is_target = False
-            if not stripped.startswith("#"):
-                temp_line = stripped
-                if temp_line.startswith("export "):
-                    temp_line = temp_line[len("export "):].strip()
-                if temp_line.startswith("OPENROUTER_API_KEY="):
-                    is_target = True
-
-            if is_target:
-                lines.append(new_line)
-                found = True
-            else:
-                lines.append(line)
-
-    if not found:
-        lines.append(new_line)
-
-    new_content = "\n".join(lines) + "\n"
-
-    # Use NamedTemporaryFile in the same directory for atomic replace
-    fd, temp_path_str = tempfile.mkstemp(dir=str(env_file.parent), prefix="env_tmp_")
-    temp_path = Path(temp_path_str)
-    try:
-        os.chmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        temp_path.replace(env_file)
-        # Just to be extremely robust, set 0600 on the final path too
-        try:
-            os.chmod(str(env_file), 0o600)
-        except Exception:
-            pass
-    except Exception as e:
-        if temp_path.exists():
-            try:
-                temp_path.unlink()
-            except Exception:
-                pass
-        raise e
+    env_file = env_creds._env_file()
+    if not env_file.is_file():
+        return None
+    content = env_file.read_text(encoding="utf-8")
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() != name:
+            continue
+        parsed = shlex.split(value.strip())
+        if parsed and parsed[0].strip():
+            return parsed[0].strip()
+    return None

@@ -19,10 +19,13 @@ def _run_async(coro):
     else:
         return asyncio.run(coro)
 
-def check_provider(provider: str) -> Tuple[bool, str]:
+def check_provider(provider: str, account: str | None = None) -> Tuple[bool, str]:
     """
     Perform a synchronous, read-only connectivity probe on a given LLM provider.
     5s timeout, no retries, returns a static status string.
+
+    *account* selects a named account.  When ``None``, the active/default
+    credential is used.
     """
     prov = provider.lower().replace("-", "_").strip()
     
@@ -31,7 +34,7 @@ def check_provider(provider: str) -> Tuple[bool, str]:
 
     try:
         if prov == "openrouter":
-            key = openrouter_creds.get_persisted_api_key()
+            key = openrouter_creds.get_persisted_api_key(account=account)
             if not key:
                 return False, "Missing Credentials"
             url = "https://openrouter.ai/api/v1/auth/key"
@@ -40,6 +43,8 @@ def check_provider(provider: str) -> Tuple[bool, str]:
                 "Accept": "application/json",
             }
         elif prov == "opencode":
+            if account is not None and account != "default":
+                return False, "unsupported (named account)"
             key = opencode_creds.get_opencode_api_key()
             if not key:
                 return False, "Missing Credentials"
@@ -49,13 +54,15 @@ def check_provider(provider: str) -> Tuple[bool, str]:
                 "Accept": "application/json",
             }
         elif prov in ("claude", "anthropic", "claude_cli"):
-            key = creds.get_api_key()
+            key = creds.get_api_key(account=account)
             if not key:
                 return False, "Missing Credentials"
             url = "https://api.anthropic.com/v1/models"
             headers = dict(anthropic_client._headers(key))
             headers["accept"] = "application/json"
         elif prov in ("copilot", "github_copilot"):
+            if account is not None and account != "default":
+                return False, "unsupported (named account)"
             token, base_url = _run_async(copilot_creds.get_copilot_token())
             if not token or not base_url:
                 return False, "Missing Credentials"
@@ -68,6 +75,16 @@ def check_provider(provider: str) -> Tuple[bool, str]:
                 "Editor-Plugin-Version": copilot_creds.EDITOR_PLUGIN_VERSION,
                 "Copilot-Integration-Id": copilot_creds.COPILOT_INTEGRATION_ID,
                 "X-GitHub-Api-Version": copilot_creds.X_GITHUB_API_VERSION,
+            }
+        elif prov == "nvidia":
+            from open_llm_proxy import nvidia_creds
+            key = nvidia_creds.get_api_key(account=account)
+            if not key:
+                return False, "Missing Credentials"
+            url = "https://integrate.api.nvidia.com/v1/models"
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Accept": "application/json",
             }
         else:
             raise ValueError(f"Unknown provider: {provider}")
