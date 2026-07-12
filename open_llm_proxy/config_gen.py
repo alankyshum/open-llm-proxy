@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 import yaml
@@ -14,6 +15,20 @@ except ImportError:
         "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5",
         "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"
     }
+
+_ACCOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _validate_account_in_token(token: str, context: str) -> None:
+    """Validate @account suffix in the provider portion. Raise ValueError if malformed."""
+    provider_part = token.split("/")[0]
+    if "@" in provider_part:
+        _discard, account = provider_part.split("@", 1)
+        if not account or not _ACCOUNT_RE.match(account):
+            raise ValueError(
+                f"Malformed account tag in '{token}' in {context}"
+            )
+
 
 def parse_fallback_chain(model_str: str) -> list[str]:
     if not isinstance(model_str, str):
@@ -37,6 +52,7 @@ def parse_fallback_chain(model_str: str) -> list[str]:
             parts = t.split("/")
             if any(not p.strip() for p in parts):
                 raise ValueError(f"Malformed fallback entry '{t}' in {model_str}")
+            _validate_account_in_token(t, model_str)
         return tokens
     else:
         if "/" not in s:
@@ -44,27 +60,72 @@ def parse_fallback_chain(model_str: str) -> list[str]:
         parts = s.split("/")
         if any(not p.strip() for p in parts):
             raise ValueError(f"Malformed model string: {model_str}")
+        _validate_account_in_token(s, model_str)
         return [s]
+
+def _resolve_account_api_key(
+    provider_registry_key: str, account: str, token: str,
+) -> str:
+    """Resolve a named account's API key from registry per-account file.
+
+    Raises ``ValueError`` (with a reference to *token*) if the account
+    has no stored credential.
+    """
+    from open_llm_proxy import account_registry
+
+    try:
+        secret = account_registry.read_secret(provider_registry_key, account)
+    except account_registry.AccountRegistryError:
+        raise ValueError(
+            f"account {account!r} for provider {provider_registry_key} "
+            f"(in '{token}') has no stored credential"
+        )
+    if secret is None:
+        raise ValueError(
+            f"account {account!r} for provider {provider_registry_key} "
+            f"(in '{token}') has no stored credential"
+        )
+    return secret.decode().strip()
+
 
 def map_token_to_deployment_params(token: str) -> dict:
     if "/" not in token:
         raise ValueError(f"Invalid token: {token}")
-    provider, rest = token.split("/", 1)
+    provider_and_account, rest = token.split("/", 1)
     
-    if provider == "claude-cli":
+    # Split optional @account from provider
+    account = None
+    if "@" in provider_and_account:
+        base_provider, account = provider_and_account.split("@", 1)
+    else:
+        base_provider = provider_and_account
+    
+    if base_provider == "claude-cli":
         base_model_id = rest.split(":")[0] if ":" in rest else rest
         if base_model_id not in _CATALOG_IDS:
             raise ValueError(f"Invalid claude-cli model ID: {base_model_id}")
-        return {
+        result: dict = {
             "model": f"claude-cli/{rest}"
         }
-    elif provider == "github-copilot":
+        if account is not None:
+            result["claude_account"] = account
+        return result
+    elif base_provider == "github-copilot":
+        if account is not None:
+            raise ValueError(
+                f"account {account!r} for provider github-copilot "
+                f"(in '{token}') is not yet supported. "
+                f"Use github-copilot/{rest} (without @account) for the default account."
+            )
         return {
             "model": f"github-copilot/gh-{rest}",
             "custom_llm_provider": "github-copilot",
             "api_key": "not-needed",
         }
-    elif provider == "openrouter":
+    elif base_provider == "openrouter":
+        if account is not None and account != "default":
+            key = _resolve_account_api_key("openrouter", account, token)
+            return {"model": f"openrouter/{rest}", "api_key": key}
         from open_llm_proxy.openrouter_creds import get_persisted_api_key
         key = get_persisted_api_key()
         os.environ["OPENROUTER_API_KEY"] = key
@@ -72,7 +133,14 @@ def map_token_to_deployment_params(token: str) -> dict:
             "model": f"openrouter/{rest}",
             "api_key": "os.environ/OPENROUTER_API_KEY"
         }
-    elif provider == "google":
+    elif base_provider in ("nvidia", "nvidia_nim"):
+        if account is not None and account != "default":
+            key = _resolve_account_api_key("nvidia", account, token)
+            return {"model": f"nvidia_nim/{rest}", "api_key": key}
+        return {
+            "model": f"nvidia_nim/{rest}",
+        }
+    elif base_provider == "google":
         model_id = rest
         if model_id.startswith("models/"):
             model_id = model_id[len("models/"):]
@@ -80,7 +148,13 @@ def map_token_to_deployment_params(token: str) -> dict:
             "model": f"gemini/{model_id}",
             "api_key": "os.environ/GEMINI_API_KEY"
         }
-    elif provider == "opencode":
+    elif base_provider == "opencode":
+        if account is not None:
+            raise ValueError(
+                f"account {account!r} for provider opencode "
+                f"(in '{token}') is not yet supported. "
+                f"Use opencode/{rest} (without @account) for the default account."
+            )
         from open_llm_proxy.opencode_creds import get_opencode_api_key
         # Securely read key at runtime/config generation to fail fast if absent.
         # This populates os.environ["OPENCODE_API_KEY"] if sourced from auth.json.
@@ -91,9 +165,24 @@ def map_token_to_deployment_params(token: str) -> dict:
             "api_base": "https://opencode.ai/zen/v1",
             "api_key": "os.environ/OPENCODE_API_KEY"
         }
+    elif base_provider == "ollama-local":
+        # Local Ollama server — no auth, no remote quota. litellm dispatches
+        # via its ollama_chat provider against the local daemon. num_ctx caps
+        # the KV-cache: the model's max context (262k) balloons RAM to ~26GB,
+        # so we pin a modest window suitable for vision/UI tasks. think=False
+        # disables the reasoning/thinking block for controllable-reasoning
+        # models (e.g. gemma4) so the final answer isn't preceded by a think
+        # block the opencode client drops; num_predict is a generous cap.
+        return {
+            "model": f"ollama_chat/{rest}",
+            "api_base": "http://127.0.0.1:11434",
+            "num_ctx": 16384,
+            "num_predict": 4000,
+            "think": False,
+        }
     else:
         return {
-            "model": token
+            "model": f"{base_provider}/{rest}"
         }
 
 

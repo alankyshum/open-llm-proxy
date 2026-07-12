@@ -12,6 +12,18 @@ import yaml
 
 DEFAULT_CONFIG = Path.home() / ".config/open-llm-proxy/agent-config.yml"
 
+KNOWN_PROVIDERS = ("openrouter", "opencode", "github-copilot", "claude-cli", "nvidia")
+
+# Provider metadata — single source of truth for both TUI and CLI branching.
+# auth_kind: "api-key" (hidden prompt save) | "oauth-cli" (external login helper)
+PROVIDERS: dict[str, dict[str, str]] = {
+    "openrouter": {"label": "OpenRouter", "auth_kind": "api-key"},
+    "nvidia": {"label": "NVIDIA (NIM)", "auth_kind": "api-key"},
+    "opencode": {"label": "OpenCode", "auth_kind": "oauth-cli"},
+    "github-copilot": {"label": "GitHub Copilot", "auth_kind": "oauth-cli"},
+    "claude-cli": {"label": "Claude CLI", "auth_kind": "oauth-cli"},
+}
+
 
 def _help(args: argparse.Namespace) -> int:
     parser = build_parser()
@@ -180,9 +192,6 @@ def _service(args: argparse.Namespace) -> int:
         return 0
 
     if action == "stop":
-        # KeepAlive=true means the job restarts on plain `stop`; use `kill` to
-        # signal the running process. The service remains loaded so `start`
-        # (kickstart) can bring it back.
         result = _launchctl("kill", "SIGTERM", target)
         if result.returncode != 0:
             print(
@@ -241,6 +250,17 @@ def _check_claude_cli() -> tuple[bool, str]:
     return False, "key is empty"
 
 
+def _check_nvidia() -> tuple[bool, str]:
+    try:
+        from open_llm_proxy import nvidia_creds
+        key = nvidia_creds.get_api_key()
+        if key and key.strip():
+            return True, "credential discoverable"
+    except Exception as e:
+        return False, str(e)
+    return False, "key is empty"
+
+
 def _run_opencode_login() -> int:
     try:
         res = subprocess.run(["opencode", "auth", "login", "https://opencode.ai"])
@@ -289,7 +309,224 @@ def _run_claude_cli_login() -> int:
     return 0
 
 
+def _ensure_registry_account(provider: str) -> None:
+    """Add a @default account for *provider* if none exists in the registry.
+
+    Does nothing if the provider already has accounts.  Uses the storage
+    convention appropriate for each provider's legacy credential path.
+    """
+    from open_llm_proxy import account_registry
+
+    if account_registry.list_accounts(provider):
+        return
+    if provider == "openrouter":
+        account_registry.add_account(
+            provider, storage="env-line", ref="OPENROUTER_API_KEY"
+        )
+    elif provider == "opencode":
+        account_registry.add_account(provider, storage="external", ref="opencode")
+    elif provider == "github-copilot":
+        account_registry.add_account(provider, storage="external", ref="copilot")
+    elif provider == "claude-cli":
+        account_registry.add_account(provider, storage="external", ref="claude-default")
+    elif provider == "nvidia":
+        account_registry.add_account(
+            provider, storage="env-line", ref="NVIDIA_API_KEY"
+        )
+
+
+def _capture_oauth_credential(provider: str) -> bytes | None:
+    """Read the OAuth credential that was just established by an external login.
+
+    Checks the legacy credential source for *provider* and returns the full
+    credential payload as bytes, or ``None`` if nothing is discoverable.
+    """
+    import json
+
+    if provider == "claude-cli":
+        # ~/.claude/.credentials.json is written by `claude auth login`
+        path = Path.home() / ".claude" / ".credentials.json"
+        if path.is_file():
+            try:
+                data = json.loads(path.read_bytes())
+                if isinstance(data, dict) and "claudeAiOauth" in data:
+                    return json.dumps(data).encode()
+            except Exception:
+                pass
+        return None
+
+    if provider == "opencode":
+        path = Path.home() / ".local" / "share" / "opencode" / "auth.json"
+        if path.is_file():
+            try:
+                data = json.loads(path.read_bytes())
+                if isinstance(data, dict) and "opencode" in data:
+                    return json.dumps(data).encode()
+            except Exception:
+                pass
+        return None
+
+    if provider == "github-copilot":
+        # Check opencode auth.json (github-copilot section) first
+        path = Path.home() / ".local" / "share" / "opencode" / "auth.json"
+        if path.is_file():
+            try:
+                data = json.loads(path.read_bytes())
+                ghc = data.get("github-copilot")
+                if isinstance(ghc, dict) and any(
+                    ghc.get(k) for k in ("access", "refresh", "oauth_token")
+                ):
+                    return json.dumps({"github-copilot": ghc}).encode()
+            except Exception:
+                pass
+        # Fall back to copilot.json
+        fallback = Path.home() / ".config" / "open-llm-proxy" / "copilot.json"
+        if fallback.is_file():
+            try:
+                return fallback.read_bytes()
+            except Exception:
+                pass
+        return None
+
+    return None
+
+
+def add_provider_account(
+    provider: str, name: str | None = None, key: str | None = None
+) -> int:
+    """Core logic to add a provider account shared by CLI and TUI.
+
+    *provider* must be a key in PROVIDERS.
+    If *name* is ``None`` and this is the first account, it becomes
+    ``"default"``; if a second account, the caller must supply *name*.
+
+    For ``api-key`` providers, *key* may be passed directly (TUI already
+    captured it) or left as ``None`` (CLI reads from stdin or interactive
+    prompt).
+
+    For ``oauth-cli`` providers, *key* is ignored; the external login
+    helper is run instead.
+
+    Returns exit code (0 = success).
+    """
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
+    from open_llm_proxy import account_registry
+
+    migrate_legacy_credentials()
+
+    existing = account_registry.list_accounts(provider)
+    auth_kind = PROVIDERS[provider]["auth_kind"]
+
+    # First account auto-named "default" if no name given.
+    if not existing and name is None:
+        name = "default"
+    elif existing and name is None:
+        print(
+            f"Error: {provider} already has accounts; use --name to name the new account.",
+            file=sys.stderr,
+        )
+        return 1
+    if not existing:
+        name = "default"
+
+    if auth_kind == "api-key":
+        if key is None:
+            import getpass
+
+            try:
+                if not sys.stdin.isatty():
+                    key = sys.stdin.read().strip()
+                else:
+                    key = getpass.getpass(
+                        f"Enter {PROVIDERS[provider]['label']} API Key: "
+                    ).strip()
+            except Exception as e:
+                print(f"Error reading API key: {e}", file=sys.stderr)
+                return 1
+        if not key:
+            print("Error: API key cannot be empty", file=sys.stderr)
+            return 1
+
+        if name == "default":
+            # Default account uses env-line storage
+            if provider == "openrouter":
+                from open_llm_proxy import openrouter_creds
+                openrouter_creds.save_api_key(key)
+            elif provider == "nvidia":
+                from open_llm_proxy import nvidia_creds
+                nvidia_creds.save_api_key(key)
+            else:
+                from open_llm_proxy import env_creds
+                env_creds.set_env_key(f"{provider.upper()}_API_KEY", key)
+            account_registry.add_account(
+                provider, name, storage="env-line",
+                ref=f"{provider.upper()}_API_KEY".replace("-", "_"),
+            )
+        else:
+            # Named account: write key to per-account file
+            account_registry.add_account(
+                provider, name, storage="api-key", secret_bytes=key.encode()
+            )
+        print(f"Account {name!r} added for {provider}.")
+        return 0
+
+    elif auth_kind == "oauth-cli":
+        if provider == "opencode":
+            code = _run_opencode_login()
+        elif provider == "github-copilot":
+            code = _run_github_copilot_login()
+        elif provider == "claude-cli":
+            code = _run_claude_cli_login()
+        else:
+            return 2
+
+        if code != 0:
+            return code
+
+        is_named = name is not None and name != "default"
+
+        if is_named:
+            # Snapshot the freshly-obtained credential into a per-account file
+            cred_bytes = _capture_oauth_credential(provider)
+            if cred_bytes is None:
+                print(
+                    f"Error: Could not capture OAuth credential after {provider} "
+                    f"login for account {name!r}. No account was created.",
+                    file=sys.stderr,
+                )
+                return 1
+
+            storage_map = {
+                "claude-cli": "claude-oauth",
+                "opencode": "api-key",
+                "github-copilot": "copilot-oauth",
+            }
+            account_registry.add_account(
+                provider, name,
+                storage=storage_map.get(provider, "api-key"),
+                secret_bytes=cred_bytes,
+            )
+        else:
+            ref_map = {
+                "opencode": "opencode",
+                "github-copilot": "copilot",
+                "claude-cli": "claude-default",
+            }
+            account_registry.add_account(
+                provider, name, storage="external", ref=ref_map[provider]
+            )
+        print(f"Account {name!r} added for {provider}.")
+        return 0
+
+    print(f"Error: unknown provider {provider!r}", file=sys.stderr)
+    return 2
+
+
 def _auth_set(args: argparse.Namespace) -> int:
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
+
+    migrate_legacy_credentials()
+
     import getpass
     from open_llm_proxy import openrouter_creds
 
@@ -304,6 +541,7 @@ def _auth_set(args: argparse.Namespace) -> int:
                 print("Error: API key cannot be empty", file=sys.stderr)
                 return 1
             openrouter_creds.save_api_key(key)
+            _ensure_registry_account("openrouter")
             print("Successfully saved OpenRouter API Key.")
             return 0
         except Exception as e:
@@ -311,20 +549,140 @@ def _auth_set(args: argparse.Namespace) -> int:
             return 1
 
     elif provider == "opencode":
-        return _run_opencode_login()
+        code = _run_opencode_login()
+        if code == 0:
+            _ensure_registry_account("opencode")
+        return code
 
     elif provider == "github-copilot":
-        return _run_github_copilot_login()
+        code = _run_github_copilot_login()
+        if code == 0:
+            _ensure_registry_account("github-copilot")
+        return code
 
     elif provider == "claude-cli":
-        return _run_claude_cli_login()
+        code = _run_claude_cli_login()
+        if code == 0:
+            _ensure_registry_account("claude-cli")
+        return code
+
+    elif provider == "nvidia":
+        try:
+            from open_llm_proxy import nvidia_creds
+            if not sys.stdin.isatty():
+                key = sys.stdin.read().strip()
+            else:
+                key = getpass.getpass("Enter NVIDIA API Key: ").strip()
+            if not key:
+                print("Error: API key cannot be empty", file=sys.stderr)
+                return 1
+            nvidia_creds.save_api_key(key)
+            _ensure_registry_account("nvidia")
+            print("Successfully saved NVIDIA API Key.")
+            return 0
+        except Exception as e:
+            print(f"Error saving NVIDIA API Key: {e}", file=sys.stderr)
+            return 1
 
     return 2
 
 
+def _auth_accounts(args: argparse.Namespace) -> int:
+    """List accounts per provider, marking the active one."""
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
+    from open_llm_proxy import account_registry
+
+    migrate_legacy_credentials()
+
+    providers = [args.provider] if args.provider else KNOWN_PROVIDERS
+    any_found = False
+
+    for p in providers:
+        accounts = account_registry.list_accounts(p)
+        if not accounts:
+            continue
+        any_found = True
+        print(f"{p}:")
+        for a in accounts:
+            prefix = "  * " if a.is_active else "    "
+            print(f"{prefix}{a.name}")
+
+    if not any_found:
+        print("No credentials configured.  Use `auth set <provider>` or `auth add <provider>`.")
+    return 0
+
+
+def _auth_add(args: argparse.Namespace) -> int:
+    """Add a credential for a provider and register it as an account."""
+    return add_provider_account(args.provider, name=args.name)
+
+
+def _auth_rename(args: argparse.Namespace) -> int:
+    """Rename an account (requires >=2 accounts for the provider)."""
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
+    from open_llm_proxy import account_registry
+
+    migrate_legacy_credentials()
+
+    try:
+        account_registry.rename_account(args.provider, args.old, args.new)
+        print(f"Account {args.old!r} renamed to {args.new!r} for {args.provider}.")
+        return 0
+    except account_registry.AccountRegistryError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _auth_use(args: argparse.Namespace) -> int:
+    """Set the active account for a provider."""
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
+    from open_llm_proxy import account_registry
+
+    migrate_legacy_credentials()
+
+    try:
+        account_registry.set_active(args.provider, args.name)
+        # Best-effort invalidate the credential cache so the next untagged
+        # call resolves fresh (defense in depth alongside the cache-key fix).
+        try:
+            from open_llm_proxy import creds as _creds
+            _creds.clear_cache()
+        except Exception:
+            pass
+        print(f"Active account for {args.provider} is now {args.name!r}.")
+        return 0
+    except account_registry.AccountRegistryError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _auth_remove(args: argparse.Namespace) -> int:
+    """Remove an account (--force to remove the last one)."""
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
+    from open_llm_proxy import account_registry
+
+    migrate_legacy_credentials()
+
+    try:
+        account_registry.remove_account(
+            args.provider, args.name, force=args.force
+        )
+        print(f"Account {args.name!r} removed from {args.provider}.")
+        return 0
+    except account_registry.AccountRegistryError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def _auth_check(args: argparse.Namespace) -> int:
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
     from open_llm_proxy import connectivity
-    providers_to_check = [args.provider] if args.provider else ['openrouter', 'opencode', 'github-copilot', 'claude-cli']
+
+    migrate_legacy_credentials()
+
+    providers_to_check = (
+        [args.provider] if args.provider else list(KNOWN_PROVIDERS)
+    )
 
     any_failed = False
     for p in providers_to_check:
@@ -339,6 +697,14 @@ def _auth_check(args: argparse.Namespace) -> int:
 
 
 def _auth_orchestrator(args: argparse.Namespace) -> int:
+    """Bare ``auth`` handler — launches TUI when interactive, else legacy flow.
+
+    If ``--no-tui`` was passed or stdin is not a TTY, runs the original
+    orchestrator that walks through each provider sequentially.
+    """
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
+
+    migrate_legacy_credentials()
     # 1. OpenRouter
     ok, _ = _check_openrouter()
     if ok:
@@ -365,7 +731,6 @@ def _auth_orchestrator(args: argparse.Namespace) -> int:
         except Exception as e:
             print(f"Error saving OpenRouter API Key: {e}", file=sys.stderr)
             return 1
-        # Recheck
         ok, msg = _check_openrouter()
         if not ok:
             print(f"Error: OpenRouter credential unresolved after saving: {msg}", file=sys.stderr)
@@ -402,6 +767,38 @@ def _auth_orchestrator(args: argparse.Namespace) -> int:
             return code
         print("[OK] claude-cli: credential discoverable")
 
+    # 5. NVIDIA
+    ok, _ = _check_nvidia()
+    if ok:
+        print("[OK] nvidia: credential discoverable")
+    else:
+        from open_llm_proxy import nvidia_creds
+        if not sys.stdin.isatty():
+            key = sys.stdin.read().strip()
+        else:
+            try:
+                key = nvidia_creds.get_api_key().strip()
+            except Exception:
+                import getpass
+                try:
+                    key = getpass.getpass("Enter NVIDIA API Key: ").strip()
+                except Exception as e:
+                    print(f"Error reading NVIDIA API Key: {e}", file=sys.stderr)
+                    return 1
+        if not key:
+            print("Error: NVIDIA API key cannot be empty", file=sys.stderr)
+            return 1
+        try:
+            nvidia_creds.save_api_key(key)
+        except Exception as e:
+            print(f"Error saving NVIDIA API Key: {e}", file=sys.stderr)
+            return 1
+        ok, msg = _check_nvidia()
+        if not ok:
+            print(f"Error: NVIDIA credential unresolved after saving: {msg}", file=sys.stderr)
+            return 1
+        print("[OK] nvidia: credential discoverable")
+
     return 0
 
 
@@ -427,6 +824,94 @@ def _config(args: argparse.Namespace) -> int:
     else:
         print(yaml.safe_dump(config, sort_keys=False), end="")
     return 0
+
+
+def _reload(args: argparse.Namespace) -> int:
+    """Hot-reload the live proxy's routing config without a restart.
+
+    Atomically swaps the running Router's routes in-process (in-flight
+    requests from other agents are preserved). Falls back to nothing —
+    on failure the caller decides whether a disruptive restart is warranted.
+    """
+    import hashlib
+    import time
+    import urllib.error
+    import urllib.request
+
+    config_path = Path(args.config)
+    try:
+        expected_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        print(f"Error: cannot read {config_path}: {exc}", file=sys.stderr)
+        return 1
+
+    base = f"http://127.0.0.1:{args.port}"
+    health_url = f"{base}/healthz"
+    reload_url = f"{base}/internal/config/reload"
+    timeout = args.timeout
+
+    def _health() -> dict | None:
+        try:
+            with urllib.request.urlopen(health_url, timeout=2) as response:
+                if response.status != 200:
+                    return None
+                data = json.loads(response.read())
+                return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    health = _health()
+    if not health or "config_hash" not in health:
+        print(
+            "Error: proxy is not reachable or lacks the reload contract "
+            f"({health_url})",
+            file=sys.stderr,
+        )
+        return 1
+    if health.get("config_hash") == expected_hash:
+        print("Proxy already has current routing config; nothing to reload.")
+        return 0
+
+    payload = json.dumps({"expected_hash": expected_hash}).encode()
+    request = urllib.request.Request(
+        reload_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            result = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = json.loads(exc.read()).get("detail", "")
+        except Exception:
+            detail = getattr(exc, "reason", "") or str(exc)
+        print(
+            f"Error: proxy rejected reload (HTTP {exc.code}): {detail}",
+            file=sys.stderr,
+        )
+        return 2
+    except Exception as exc:
+        detail = getattr(exc, "reason", "") or str(exc)
+        print(f"Error: proxy reload request failed: {detail}", file=sys.stderr)
+        return 1
+
+    if not isinstance(result, dict) or result.get("config_hash") != expected_hash:
+        print("Error: proxy returned an unexpected config hash", file=sys.stderr)
+        return 2
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        health = _health()
+        if health and health.get("config_hash") == expected_hash:
+            print("Reloaded: routing config applied without restart.")
+            return 0
+        time.sleep(0.25)
+
+    print("Error: reload was not acknowledged within timeout", file=sys.stderr)
+    return 2
 
 
 def _models(args: argparse.Namespace) -> int:
@@ -459,6 +944,18 @@ def _models(args: argparse.Namespace) -> int:
     else:
         print("\n".join(models))
     return 0
+
+
+def _handle_bare_auth(args: argparse.Namespace) -> int:
+    """Dispatch bare ``auth``: TUI if TTY + not --no-tui, else orchestrator."""
+    if sys.stdin.isatty() and not getattr(args, "no_tui", False):
+        try:
+            from open_llm_proxy.auth_tui import run_auth_tui
+            return run_auth_tui()
+        except ImportError:
+            # questionary not installed — fall through to orchestrator
+            pass
+    return _auth_orchestrator(args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -587,6 +1084,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     config_parser.set_defaults(handler=_config)
 
+    reload_parser = subparsers.add_parser(
+        "reload",
+        help="Hot-reload the live proxy's routing config without a restart.",
+    )
+    reload_parser.add_argument(
+        "--config",
+        "--config-path",
+        dest="config",
+        type=Path,
+        default=DEFAULT_CONFIG,
+        help=f"Deployed agent configuration path (default: {DEFAULT_CONFIG}).",
+    )
+    reload_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port the live proxy is listening on (default: 8765).",
+    )
+    reload_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=15.0,
+        help="Seconds to wait for the reload to be acknowledged (default: 15).",
+    )
+    reload_parser.set_defaults(handler=_reload)
+
     models_parser = subparsers.add_parser(
         "models",
         aliases=["available-models"],
@@ -620,7 +1143,12 @@ def build_parser() -> argparse.ArgumentParser:
         "auth",
         help="Manage provider credentials.",
     )
-    auth_parser.set_defaults(handler=_auth_orchestrator)
+    auth_parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="Skip interactive TUI even if stdin is a TTY.",
+    )
+    auth_parser.set_defaults(handler=_handle_bare_auth)
     auth_subparsers = auth_parser.add_subparsers(dest="subcommand", required=False)
 
     auth_set_parser = auth_subparsers.add_parser(
@@ -629,7 +1157,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     auth_set_parser.add_argument(
         "provider",
-        choices=["openrouter", "opencode", "github-copilot", "claude-cli"],
+        choices=KNOWN_PROVIDERS,
         help="Provider name to set.",
     )
     auth_set_parser.set_defaults(handler=_auth_set)
@@ -641,10 +1169,72 @@ def build_parser() -> argparse.ArgumentParser:
     auth_check_parser.add_argument(
         "provider",
         nargs="?",
-        choices=["openrouter", "opencode", "github-copilot", "claude-cli"],
+        choices=KNOWN_PROVIDERS,
         help="Optional provider name to check.",
     )
     auth_check_parser.set_defaults(handler=_auth_check)
+
+    # auth accounts [provider]
+    auth_accounts_parser = auth_subparsers.add_parser(
+        "accounts",
+        help="List accounts per provider (or for one provider).",
+    )
+    auth_accounts_parser.add_argument(
+        "provider",
+        nargs="?",
+        choices=KNOWN_PROVIDERS,
+        help="Optional provider name to list.",
+    )
+    auth_accounts_parser.set_defaults(handler=_auth_accounts)
+
+    # auth add <provider> [--name NAME]
+    auth_add_parser = auth_subparsers.add_parser(
+        "add",
+        help="Add a credential for a provider and register it as an account.",
+    )
+    auth_add_parser.add_argument(
+        "provider",
+        choices=KNOWN_PROVIDERS,
+        help="Provider name.",
+    )
+    auth_add_parser.add_argument(
+        "--name",
+        help="Account name (auto-named 'default' for the first account).",
+    )
+    auth_add_parser.set_defaults(handler=_auth_add)
+
+    # auth rename <provider> <old> <new>
+    auth_rename_parser = auth_subparsers.add_parser(
+        "rename",
+        help="Rename an account (requires >=2 accounts for the provider).",
+    )
+    auth_rename_parser.add_argument("provider", choices=KNOWN_PROVIDERS)
+    auth_rename_parser.add_argument("old", help="Current account name.")
+    auth_rename_parser.add_argument("new", help="New account name.")
+    auth_rename_parser.set_defaults(handler=_auth_rename)
+
+    # auth use <provider> <name>
+    auth_use_parser = auth_subparsers.add_parser(
+        "use",
+        help="Set the active account for a provider.",
+    )
+    auth_use_parser.add_argument("provider", choices=KNOWN_PROVIDERS)
+    auth_use_parser.add_argument("name", help="Account name to activate.")
+    auth_use_parser.set_defaults(handler=_auth_use)
+
+    # auth remove <provider> <name> [--force]
+    auth_remove_parser = auth_subparsers.add_parser(
+        "remove",
+        help="Remove an account (--force to remove the last one).",
+    )
+    auth_remove_parser.add_argument("provider", choices=KNOWN_PROVIDERS)
+    auth_remove_parser.add_argument("name", help="Account name to remove.")
+    auth_remove_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow removing the last account.",
+    )
+    auth_remove_parser.set_defaults(handler=_auth_remove)
 
     return parser
 

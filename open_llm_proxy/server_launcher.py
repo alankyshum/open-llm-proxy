@@ -16,6 +16,7 @@ print("SERVER_LAUNCHER: Importing open_llm_proxy callbacks/config...", flush=Tru
 from open_llm_proxy.callbacks import (
     FallbackChainCommaRewriterCallback,
     GeminiThinkingBudgetCallback,
+    OllamaReasoningStripCallback,
     ServedByCallback,
 )
 from open_llm_proxy.config_gen import (
@@ -203,6 +204,10 @@ def setup_callbacks(
     if not any(isinstance(c, ServedByCallback) for c in litellm.callbacks):
         litellm.callbacks.append(ServedByCallback())
         log.info("ServedByCallback registered.")
+
+    if not any(isinstance(c, OllamaReasoningStripCallback) for c in litellm.callbacks):
+        litellm.callbacks.append(OllamaReasoningStripCallback())
+        log.info("OllamaReasoningStripCallback registered.")
 
     return rate_limit_callback
 

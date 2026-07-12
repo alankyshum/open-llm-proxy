@@ -184,6 +184,89 @@ class FallbackChainCommaRewriterCallback(CustomLogger):
         return None
 
 
+def _is_ollama_response(response: Any) -> bool:
+    """True when the winning deployment is a local ollama hop.
+
+    Detected via the served model id (``ollama_chat/...`` / ``ollama/...``)
+    on the response or its hidden params. Scoped narrowly so we never touch
+    remote provider responses.
+    """
+    candidates: list[str] = []
+    model = getattr(response, "model", None)
+    if isinstance(model, str):
+        candidates.append(model)
+    hidden = getattr(response, "_hidden_params", None)
+    if isinstance(hidden, dict):
+        for k in ("model", "custom_llm_provider"):
+            v = hidden.get(k)
+            if isinstance(v, str):
+                candidates.append(v)
+    return any("ollama" in c.lower() for c in candidates)
+
+
+class OllamaReasoningStripCallback(CustomLogger):
+    """Strip ``reasoning_content`` from local ollama (qwen3-vl) responses.
+
+    Reasoning-model ollama deployments emit a large ``reasoning_content``
+    block followed by a short final ``content``. opencode's
+    ``@ai-sdk/openai-compatible`` client drops the final content in that
+    shape, rendering an empty answer. We discard the reasoning so the client
+    only sees the plain answer. Scoped to the ollama hop only; remote
+    providers are untouched.
+    """
+
+    @staticmethod
+    def _strip_message(msg: Any) -> None:
+        if msg is None:
+            return
+        # Pydantic message objects and plain dicts both appear here.
+        if isinstance(msg, dict):
+            for k in ("reasoning_content", "reasoning", "thinking"):
+                if msg.get(k):
+                    msg[k] = None
+        else:
+            for k in ("reasoning_content", "reasoning", "thinking"):
+                if getattr(msg, k, None):
+                    try:
+                        setattr(msg, k, None)
+                    except Exception:
+                        pass
+
+    async def async_post_call_success_hook(
+        self,
+        data: dict,
+        user_api_key_dict: Any,
+        response: Any,
+    ) -> Any:
+        try:
+            if not _is_ollama_response(response):
+                return response
+            choices = getattr(response, "choices", None)
+            if isinstance(choices, list):
+                for ch in choices:
+                    self._strip_message(getattr(ch, "message", None))
+        except Exception:
+            log.debug("OllamaReasoningStripCallback: non-stream strip skipped", exc_info=True)
+        return response
+
+    async def async_post_call_streaming_iterator_hook(
+        self,
+        user_api_key_dict: Any,
+        response: Any,
+        request_data: dict,
+    ):
+        async for chunk in response:
+            try:
+                if _is_ollama_response(chunk):
+                    choices = getattr(chunk, "choices", None)
+                    if isinstance(choices, list):
+                        for ch in choices:
+                            self._strip_message(getattr(ch, "delta", None))
+            except Exception:
+                log.debug("OllamaReasoningStripCallback: stream strip skipped", exc_info=True)
+            yield chunk
+
+
 class ServedByCallback(CustomLogger):
     """Expose the concrete winning deployment in response headers."""
 

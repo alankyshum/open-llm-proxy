@@ -80,6 +80,15 @@ def test_map_token_to_deployment_params(monkeypatch):
     assert params_copilot["model"] == "github-copilot/gh-claude-sonnet-5"
     assert params_copilot["api_key"] == "not-needed"
 
+    # ollama-local mapping — routes to litellm ollama_chat provider against local daemon
+    params_ollama = map_token_to_deployment_params("ollama-local/qwen2.5vl:7b")
+    assert params_ollama["model"] == "ollama_chat/qwen2.5vl:7b"
+    assert params_ollama["api_base"] == "http://127.0.0.1:11434"
+    assert params_ollama["num_ctx"] == 16384
+    assert params_ollama["num_predict"] == 4000
+    assert params_ollama["think"] is False
+    assert "api_key" not in params_ollama
+
     monkeypatch.setattr(
         "open_llm_proxy.openrouter_creds.get_persisted_api_key",
         lambda: "sk-or-persisted",
@@ -165,6 +174,115 @@ agents:
     assert router_settings["disable_cooldowns"] is False
 
 
+def test_parse_fallback_chain_with_account():
+    # Single token with @account
+    t1 = parse_fallback_chain("claude-cli@work/claude-opus-4-8")
+    assert t1 == ["claude-cli@work/claude-opus-4-8"]
+
+    # Bracketed chain with two @account tokens + one without
+    t2 = parse_fallback_chain(
+        "open-llm-proxy/[claude-cli@work/claude-opus-4-8,claude-cli@home/claude-opus-4-8,github-copilot/claude-opus-4.8]"
+    )
+    assert t2 == [
+        "claude-cli@work/claude-opus-4-8",
+        "claude-cli@home/claude-opus-4-8",
+        "github-copilot/claude-opus-4.8",
+    ]
+
+    # Plain token without @ still works
+    t3 = parse_fallback_chain("github-copilot/claude-sonnet-5")
+    assert t3 == ["github-copilot/claude-sonnet-5"]
+
+
+def test_parse_fallback_chain_account_validation():
+    # Empty account after @
+    with pytest.raises(ValueError, match="Malformed account tag"):
+        parse_fallback_chain("claude-cli@/claude-opus-4-8")
+
+    # Bad characters in account
+    with pytest.raises(ValueError, match="Malformed account tag"):
+        parse_fallback_chain("claude-cli@BAD!/claude-opus-4-8")
+
+    # Account with uppercase (invalid per regex — must be lowercase)
+    with pytest.raises(ValueError, match="Malformed account tag"):
+        parse_fallback_chain("claude-cli@Work/claude-opus-4-8")
+
+
+def test_map_token_to_deployment_params_with_account(monkeypatch):
+    # claude-cli with @account emits claude_account
+    params = map_token_to_deployment_params("claude-cli@work/claude-opus-4-8")
+    assert params["model"] == "claude-cli/claude-opus-4-8"
+    assert params["claude_account"] == "work"
+
+    # claude-cli without @account emits NO claude_account
+    params2 = map_token_to_deployment_params("claude-cli/claude-opus-4-8")
+    assert params2["model"] == "claude-cli/claude-opus-4-8"
+    assert "claude_account" not in params2
+
+    # github-copilot with @account is not implemented → ValueError
+    with pytest.raises(ValueError, match="not yet supported"):
+        map_token_to_deployment_params("github-copilot@work/claude-sonnet-5")
+
+    # nvidia_nim with @account but no stored secret → ValueError
+    with pytest.raises(ValueError, match="no stored credential"):
+        map_token_to_deployment_params("nvidia_nim@prod/nvidia/nemotron-4")
+
+    # opencode with @account is not implemented → ValueError
+    with pytest.raises(ValueError, match="not yet supported"):
+        map_token_to_deployment_params("opencode@work/big-pickle")
+
+
+def test_generate_config_with_account(tmp_path):
+    dummy_yaml = """
+file_settings:
+  opencode:
+    model: "open-llm-proxy/[claude-cli@work/claude-opus-4-8,claude-cli@home/claude-opus-4-8,github-copilot/claude-opus-4.8]"
+    small_model: "claude-cli@default/claude-sonnet-5"
+"""
+    config_file = tmp_path / "agent-config.yml"
+    config_file.write_text(dummy_yaml)
+    config_dict = __import__("open_llm_proxy.config_gen", fromlist=[""]).generate_config(str(config_file))
+
+    model_list = config_dict["model_list"]
+    fallbacks_l = config_dict["litellm_settings"]["fallbacks"]
+    fallbacks_r = config_dict["router_settings"]["fallbacks"]
+    assert fallbacks_l == fallbacks_r
+
+    # Chain alias uses ;-separated internal form, @ preserved
+    chain_alias = (
+        "[claude-cli@work/claude-opus-4-8;claude-cli@home/claude-opus-4-8;github-copilot/claude-opus-4.8]"
+    )
+    chain_deployments = [d for d in model_list if d["model_name"] == chain_alias]
+    assert len(chain_deployments) == 3
+    # Order 1: @work
+    assert chain_deployments[0]["litellm_params"]["claude_account"] == "work"
+    assert chain_deployments[0]["litellm_params"]["model"] == "claude-cli/claude-opus-4-8"
+    assert chain_deployments[0]["model_info"]["rate_limit_key"] == "claude-cli@work/claude-opus-4-8"
+    # Order 2: @home
+    assert chain_deployments[1]["litellm_params"]["claude_account"] == "home"
+    assert chain_deployments[1]["litellm_params"]["model"] == "claude-cli/claude-opus-4-8"
+    assert chain_deployments[1]["model_info"]["rate_limit_key"] == "claude-cli@home/claude-opus-4-8"
+    # Order 3: github-copilot (no account)
+    assert "claude_account" not in chain_deployments[2]["litellm_params"]
+    assert chain_deployments[2]["model_info"]["rate_limit_key"] == "github-copilot/claude-opus-4.8"
+
+    # Individual token deployments registered with @ in key
+    assert any(d["model_name"] == "claude-cli@work/claude-opus-4-8" for d in model_list)
+    assert any(d["model_name"] == "claude-cli@home/claude-opus-4-8" for d in model_list)
+    assert any(d["model_name"] == "github-copilot/claude-opus-4.8" for d in model_list)
+
+    # small_model with @account
+    assert any(d["model_name"] == "claude-cli@default/claude-sonnet-5" for d in model_list)
+
+    # Fallbacks mapping: chain -> [tokens[1:]]
+    fallback_entry = next((f for f in fallbacks_l if chain_alias in f), None)
+    assert fallback_entry is not None
+    assert fallback_entry[chain_alias] == [
+        "claude-cli@home/claude-opus-4-8",
+        "github-copilot/claude-opus-4.8",
+    ]
+
+
 def test_invalid_claude_cli_id():
     with pytest.raises(ValueError, match="Invalid claude-cli model ID"):
         map_token_to_deployment_params("claude-cli/invalid-model-name")
@@ -187,3 +305,61 @@ file_settings:
     # Verify that the supported models are registered standalone
     assert any(d["model_name"] == "claude-cli/claude-opus-4-8" for d in model_list)
     assert any(d["model_name"] == "claude-cli/claude-sonnet-5" for d in model_list)
+
+
+# ---- HIGH — @account resolution for openrouter/nvidia -------------------------
+
+
+class TestMapTokenWithStoredAccount:
+    def test_openrouter_named_with_secret_injects_api_key(self, cfg, monkeypatch):
+        """openrouter@work/model with a stored secret injects api_key."""
+        from open_llm_proxy import account_registry
+
+        account_registry.add_account(
+            "openrouter", "work",
+            storage="api-key", secret_bytes=b"sk-or-work-secret",
+        )
+        params = map_token_to_deployment_params("openrouter@work/z-ai/glm-5.2")
+        assert params["model"] == "openrouter/z-ai/glm-5.2"
+        assert params["api_key"] == "sk-or-work-secret"
+
+    def test_openrouter_default_fallback_to_env(self, cfg, monkeypatch):
+        """openrouter@default/model with env-line storage falls through to env file."""
+        from open_llm_proxy import account_registry
+
+        account_registry.add_account(
+            "openrouter", "default", storage="env-line", ref="OPENROUTER_API_KEY",
+        )
+        monkeypatch.setattr(
+            "open_llm_proxy.openrouter_creds.get_persisted_api_key",
+            lambda account=None: "sk-or-from-env",
+        )
+        params = map_token_to_deployment_params("openrouter@default/z-ai/glm-5.2")
+        assert params["model"] == "openrouter/z-ai/glm-5.2"
+        assert params["api_key"] == "os.environ/OPENROUTER_API_KEY"
+
+    def test_openrouter_named_no_secret_raises(self, cfg, monkeypatch):
+        """openrouter@ghost/model with no stored secret raises ValueError."""
+        with pytest.raises(ValueError, match="no stored credential"):
+            map_token_to_deployment_params("openrouter@ghost/z-ai/glm-5.2")
+
+    def test_nvidia_named_with_secret_injects_api_key(self, cfg, monkeypatch):
+        """nvidia_nim@work/model with a stored secret injects api_key."""
+        from open_llm_proxy import account_registry
+
+        account_registry.add_account(
+            "nvidia", "work",
+            storage="api-key", secret_bytes=b"nv-work-secret",
+        )
+        params = map_token_to_deployment_params("nvidia_nim@work/nvidia/nemotron-4")
+        assert params["model"] == "nvidia_nim/nvidia/nemotron-4"
+        assert params["api_key"] == "nv-work-secret"
+
+
+@pytest.fixture
+def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Set OLP_CONFIG_DIR to a tmp_path and return it."""
+    d = tmp_path / "olp_config"
+    d.mkdir()
+    monkeypatch.setenv("OLP_CONFIG_DIR", str(d))
+    return d

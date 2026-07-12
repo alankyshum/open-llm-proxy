@@ -149,6 +149,15 @@ PROVIDER_PLANS: dict[str, dict[str, PlanPolicy]] = {
             notes="Zen publishes pricing but no fixed numeric request quota.",
         ),
     },
+    "ollama-local": {
+        "local": _transient_plan(
+            "Local Ollama daemon",
+            "http://127.0.0.1:11434",
+            quota_limited=False,
+            limits={"provider_capacity_limits": True},
+            notes="Local Ollama has no remote quota; only local hardware capacity applies.",
+        ),
+    },
 }
 
 DEFAULT_PLANS = {
@@ -157,10 +166,12 @@ DEFAULT_PLANS = {
     "google": "free",
     "openrouter": "free",
     "opencode": "free-models",
+    "ollama-local": "local",
 }
 
 
 def get_plan_policy(provider: str, plan: str) -> PlanPolicy:
+    provider = provider.split("@", 1)[0]
     try:
         return PROVIDER_PLANS[provider][plan]
     except KeyError as exc:
