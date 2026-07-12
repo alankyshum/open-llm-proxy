@@ -120,6 +120,17 @@ def _service_is_running() -> bool:
     return False
 
 
+def _service_is_ready() -> bool:
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8765/healthz", timeout=2) as response:
+            return response.getcode() == 200
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+        return False
+
+
 def _service(args: argparse.Namespace) -> int:
     action = args.action
     target = _service_domain_target()
@@ -130,13 +141,21 @@ def _service(args: argparse.Namespace) -> int:
             print(f"Service '{SERVICE_LABEL}' is not loaded.")
             return 1
         running = _service_is_running()
+        ready = running and _service_is_ready()
+        if ready:
+            state = "active"
+        elif running:
+            state = "starting (not ready)"
+        else:
+            state = "loaded (not running)"
         print(f"Service: {SERVICE_LABEL}")
-        print(f"State:   {'running' if running else 'loaded (not running)'}")
+        print(f"State:   {state}")
+        print(f"Health:  {'ready' if ready else 'unavailable'}")
         for line in result.stdout.splitlines():
             s = line.strip()
-            if s.startswith(("pid =", "last exit code =", "state =")):
+            if s.startswith(("pid =", "last exit code =")):
                 print(f"  {s}")
-        return 0 if running else 1
+        return 0 if ready else 1
 
     if action == "start":
         result = _launchctl("kickstart", target)
@@ -176,6 +195,214 @@ def _service(args: argparse.Namespace) -> int:
 
     print(f"Unknown action: {action}", file=sys.stderr)
     return 2
+
+
+def _check_openrouter() -> tuple[bool, str]:
+    try:
+        from open_llm_proxy import openrouter_creds
+        key = openrouter_creds.get_persisted_api_key()
+        if key and key.strip():
+            return True, "credential discoverable"
+    except Exception as e:
+        return False, str(e)
+    return False, "key is empty"
+
+
+def _check_opencode() -> tuple[bool, str]:
+    try:
+        from open_llm_proxy import opencode_creds
+        key = opencode_creds.get_opencode_api_key()
+        if key and key.strip():
+            return True, "credential discoverable"
+    except Exception as e:
+        return False, str(e)
+    return False, "key is empty"
+
+
+def _check_github_copilot() -> tuple[bool, str]:
+    try:
+        from open_llm_proxy import copilot_creds
+        key = copilot_creds.get_oauth_token()
+        if key and key.strip():
+            return True, "credential discoverable"
+    except Exception as e:
+        return False, str(e)
+    return False, "token is empty"
+
+
+def _check_claude_cli() -> tuple[bool, str]:
+    try:
+        from open_llm_proxy import creds
+        key = creds.get_api_key()
+        if key and key.strip():
+            return True, "credential discoverable"
+    except Exception as e:
+        return False, str(e)
+    return False, "key is empty"
+
+
+def _run_opencode_login() -> int:
+    try:
+        res = subprocess.run(["opencode", "auth", "login", "https://opencode.ai"])
+        if res.returncode != 0:
+            print("Error: opencode auth login failed", file=sys.stderr)
+            return res.returncode
+    except FileNotFoundError:
+        print("Error: opencode command not available", file=sys.stderr)
+        return 127
+    ok, msg = _check_opencode()
+    if not ok:
+        print(f"Error: OpenCode credential unresolved after authentication: {msg}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _run_github_copilot_login() -> int:
+    try:
+        res = subprocess.run(["opencode", "auth", "login", "https://github.com"])
+        if res.returncode != 0:
+            print("Error: github-copilot auth login failed", file=sys.stderr)
+            return res.returncode
+    except FileNotFoundError:
+        print("Error: opencode command not available", file=sys.stderr)
+        return 127
+    ok, msg = _check_github_copilot()
+    if not ok:
+        print(f"Error: github-copilot credential unresolved after authentication: {msg}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _run_claude_cli_login() -> int:
+    try:
+        res = subprocess.run(["claude", "auth", "login"])
+        if res.returncode != 0:
+            print("Error: claude auth login failed", file=sys.stderr)
+            return res.returncode
+    except FileNotFoundError:
+        print("Error: claude command not available", file=sys.stderr)
+        return 127
+    ok, msg = _check_claude_cli()
+    if not ok:
+        print(f"Error: claude-cli credential unresolved after authentication: {msg}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _auth_set(args: argparse.Namespace) -> int:
+    import getpass
+    from open_llm_proxy import openrouter_creds
+
+    provider = args.provider
+    if provider == "openrouter":
+        try:
+            if not sys.stdin.isatty():
+                key = sys.stdin.read().strip()
+            else:
+                key = getpass.getpass("Enter OpenRouter API Key: ").strip()
+            if not key:
+                print("Error: API key cannot be empty", file=sys.stderr)
+                return 1
+            openrouter_creds.save_api_key(key)
+            print("Successfully saved OpenRouter API Key.")
+            return 0
+        except Exception as e:
+            print(f"Error saving OpenRouter API Key: {e}", file=sys.stderr)
+            return 1
+
+    elif provider == "opencode":
+        return _run_opencode_login()
+
+    elif provider == "github-copilot":
+        return _run_github_copilot_login()
+
+    elif provider == "claude-cli":
+        return _run_claude_cli_login()
+
+    return 2
+
+
+def _auth_check(args: argparse.Namespace) -> int:
+    from open_llm_proxy import connectivity
+    providers_to_check = [args.provider] if args.provider else ['openrouter', 'opencode', 'github-copilot', 'claude-cli']
+
+    any_failed = False
+    for p in providers_to_check:
+        ok, msg = connectivity.check_provider(p)
+        if ok:
+            print(f"[OK] {p}: {msg}")
+        else:
+            print(f"[FAILED] {p}: {msg}", file=sys.stderr)
+            any_failed = True
+
+    return 1 if any_failed else 0
+
+
+def _auth_orchestrator(args: argparse.Namespace) -> int:
+    # 1. OpenRouter
+    ok, _ = _check_openrouter()
+    if ok:
+        print("[OK] openrouter: credential discoverable")
+    else:
+        from open_llm_proxy import openrouter_creds
+        if not sys.stdin.isatty():
+            key = sys.stdin.read().strip()
+        else:
+            try:
+                key = openrouter_creds.get_api_key().strip()
+            except Exception:
+                import getpass
+                try:
+                    key = getpass.getpass("Enter OpenRouter API Key: ").strip()
+                except Exception as e:
+                    print(f"Error reading OpenRouter API Key: {e}", file=sys.stderr)
+                    return 1
+        if not key:
+            print("Error: OpenRouter API key cannot be empty", file=sys.stderr)
+            return 1
+        try:
+            openrouter_creds.save_api_key(key)
+        except Exception as e:
+            print(f"Error saving OpenRouter API Key: {e}", file=sys.stderr)
+            return 1
+        # Recheck
+        ok, msg = _check_openrouter()
+        if not ok:
+            print(f"Error: OpenRouter credential unresolved after saving: {msg}", file=sys.stderr)
+            return 1
+        print("[OK] openrouter: credential discoverable")
+
+    # 2. OpenCode
+    ok, _ = _check_opencode()
+    if ok:
+        print("[OK] opencode: credential discoverable")
+    else:
+        code = _run_opencode_login()
+        if code != 0:
+            return code
+        print("[OK] opencode: credential discoverable")
+
+    # 3. GitHub Copilot
+    ok, _ = _check_github_copilot()
+    if ok:
+        print("[OK] github-copilot: credential discoverable")
+    else:
+        code = _run_github_copilot_login()
+        if code != 0:
+            return code
+        print("[OK] github-copilot: credential discoverable")
+
+    # 4. Claude CLI
+    ok, _ = _check_claude_cli()
+    if ok:
+        print("[OK] claude-cli: credential discoverable")
+    else:
+        code = _run_claude_cli_login()
+        if code != 0:
+            return code
+        print("[OK] claude-cli: credential discoverable")
+
+    return 0
 
 
 def _setup(args: argparse.Namespace) -> int:
@@ -310,7 +537,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("start", "Start the open-llm-proxy launchd service."),
         ("stop", "Stop the running proxy process (service stays loaded)."),
         ("restart", "Restart the open-llm-proxy launchd service."),
-        ("status", "Show the launchd service state (pid, last exit)."),
+        ("status", "Show service process and HTTP readiness state."),
     ):
         _p = subparsers.add_parser(_action, help=_help_text)
         _p.set_defaults(handler=_service, action=_action)
@@ -387,6 +614,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="OpenCode executable used for catalog discovery (default: opencode).",
     )
     models_parser.set_defaults(handler=_models)
+
+    # Auth commands
+    auth_parser = subparsers.add_parser(
+        "auth",
+        help="Manage provider credentials.",
+    )
+    auth_parser.set_defaults(handler=_auth_orchestrator)
+    auth_subparsers = auth_parser.add_subparsers(dest="subcommand", required=False)
+
+    auth_set_parser = auth_subparsers.add_parser(
+        "set",
+        help="Set credential for a provider safely/interactively.",
+    )
+    auth_set_parser.add_argument(
+        "provider",
+        choices=["openrouter", "opencode", "github-copilot", "claude-cli"],
+        help="Provider name to set.",
+    )
+    auth_set_parser.set_defaults(handler=_auth_set)
+
+    auth_check_parser = auth_subparsers.add_parser(
+        "check",
+        help="Check provider connectivity using live API probes.",
+    )
+    auth_check_parser.add_argument(
+        "provider",
+        nargs="?",
+        choices=["openrouter", "opencode", "github-copilot", "claude-cli"],
+        help="Optional provider name to check.",
+    )
+    auth_check_parser.set_defaults(handler=_auth_check)
 
     return parser
 

@@ -87,6 +87,23 @@ async def test_nemotron_thinking_budget_callback():
 
 
 @pytest.mark.anyio
+async def test_nemotron_exact_thinking_budget_callback():
+    callback = GeminiThinkingBudgetCallback()
+
+    # exact model openrouter/nvidia/nemotron-3-ultra-550b-a55b:free with small max_tokens -> raise to 4096
+    data = {"model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", "max_tokens": 64}
+    res = await callback.async_pre_call_hook(None, None, data, "completion")
+    assert res is not None
+    assert res["max_tokens"] == 4096
+
+    # absent max_tokens -> set to floor
+    data_absent = {"model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"}
+    res_absent = await callback.async_pre_call_hook(None, None, data_absent, "completion")
+    assert res_absent is not None
+    assert res_absent["max_tokens"] == 4096
+
+
+@pytest.mark.anyio
 async def test_gpt5_5_thinking_budget_callback():
     callback = GeminiThinkingBudgetCallback()
 

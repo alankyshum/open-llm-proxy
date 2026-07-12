@@ -76,6 +76,7 @@ class GeminiThinkingBudgetCallback(CustomLogger):
             ("google/",             1024, "OPEN_LLM_PROXY_GOOGLE_MIN_MAX_TOKENS"),
             ("deepseek-v4-flash-free",  4096, None),
             ("nemotron-3-ultra-free",   4096, None),
+            ("nemotron-3-ultra-550b-a55b", 4096, None),
             ("gpt-5.5",                 4096, None),
             ("big-pickle",              4096, None),
         ]

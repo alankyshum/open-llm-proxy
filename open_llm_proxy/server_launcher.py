@@ -294,6 +294,8 @@ def launch_server(
         install_non_stream_attribution()
         from open_llm_proxy.usage_reporting import install_usage_reporting
         install_usage_reporting(app)
+        from open_llm_proxy.model_chain_middleware import install_model_chain_middleware
+        install_model_chain_middleware(app)
         
         # Add healthz endpoint for sync-agents validation
         @app.get("/healthz")

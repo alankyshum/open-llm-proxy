@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 import yaml
 
-# Import the catalog from translator to validate surfaced models
+# Import the catalog from translator to validate supported models
 try:
     from open_llm_proxy.translator import _MODEL_CATALOG
     _CATALOG_IDS = {m["id"] for m in _MODEL_CATALOG}
@@ -65,6 +65,9 @@ def map_token_to_deployment_params(token: str) -> dict:
             "api_key": "not-needed",
         }
     elif provider == "openrouter":
+        from open_llm_proxy.openrouter_creds import get_persisted_api_key
+        key = get_persisted_api_key()
+        os.environ["OPENROUTER_API_KEY"] = key
         return {
             "model": f"openrouter/{rest}",
             "api_key": "os.environ/OPENROUTER_API_KEY"
@@ -109,12 +112,12 @@ def configured_model_tokens(agent_config_path: str | Path) -> set[str]:
                 model_strings.add(opencode_settings["model"])
             if "small_model" in opencode_settings:
                 model_strings.add(opencode_settings["small_model"])
-            # Extract surfaced_models
-            surfaced_models = opencode_settings.get("surfaced_models", [])
-            if isinstance(surfaced_models, list):
-                for m in surfaced_models:
+            # Extract supported_models
+            supported_models = opencode_settings.get("supported_models", [])
+            if isinstance(supported_models, list):
+                for m in supported_models:
                     if isinstance(m, str):
-                        # Surfaced models are bare tokens like "claude-cli/claude-sonnet-5"
+                        # Supported models are bare tokens like "claude-cli/claude-sonnet-5"
                         # We need to wrap them as if they were plain models
                         model_strings.add(f"open-llm-proxy/{m}")
     
@@ -143,7 +146,7 @@ def generate_config(agent_config_path: str) -> dict:
             for key in ("model", "small_model"):
                 if key in opencode_settings:
                     model_strings.add(opencode_settings[key])
-            for model in opencode_settings.get("surfaced_models", []):
+            for model in opencode_settings.get("supported_models", []):
                 if isinstance(model, str):
                     model_strings.add(f"open-llm-proxy/{model}")
     for agent_cfg in (data.get("agents") or {}).values():
@@ -197,9 +200,9 @@ def generate_config(agent_config_path: str) -> dict:
                     "model_info": {"rate_limit_key": token},
                 }
                 
-        # Register surfaced models that are bare tokens (not in chains)
-        # These come from surfaced_models list as bare tokens like "claude-cli/claude-sonnet-5"
-        # They don't have open-llm-proxy/ prefix because they come from surfaced_models list directly
+        # Register supported models that are bare tokens (not in chains)
+        # These come from supported_models list as bare tokens like "claude-cli/claude-sonnet-5"
+        # They don't have open-llm-proxy/ prefix because they come from supported_models list directly
         # But since we added "open-llm-proxy/{m}" to model_strings, they've already been processed above
 
     # Sort deployments by model_name for deterministic output

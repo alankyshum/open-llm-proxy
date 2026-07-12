@@ -80,6 +80,17 @@ def test_map_token_to_deployment_params(monkeypatch):
     assert params_copilot["model"] == "github-copilot/gh-claude-sonnet-5"
     assert params_copilot["api_key"] == "not-needed"
 
+    monkeypatch.setattr(
+        "open_llm_proxy.openrouter_creds.get_persisted_api_key",
+        lambda: "sk-or-persisted",
+    )
+    params_openrouter = map_token_to_deployment_params(
+        "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+    )
+    assert params_openrouter["model"] == "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+    assert params_openrouter["api_key"] == "os.environ/OPENROUTER_API_KEY"
+    assert __import__("os").environ["OPENROUTER_API_KEY"] == "sk-or-persisted"
+
 def test_generate_config_real(tmp_path):
     # Create a dummy agent-config.yml
     dummy_yaml = """
@@ -159,12 +170,12 @@ def test_invalid_claude_cli_id():
         map_token_to_deployment_params("claude-cli/invalid-model-name")
 
 
-def test_surfaced_models_config_gen(tmp_path):
+def test_supported_models_config_gen(tmp_path):
     dummy_yaml = """
 file_settings:
   opencode:
     model: "github-copilot/gpt-5-mini"
-    surfaced_models:
+    supported_models:
       - "claude-cli/claude-opus-4-8"
       - "claude-cli/claude-sonnet-5"
 """
@@ -173,6 +184,6 @@ file_settings:
     config_dict = generate_config(str(config_file))
     model_list = config_dict["model_list"]
 
-    # Verify that the surfaced models are registered standalone
+    # Verify that the supported models are registered standalone
     assert any(d["model_name"] == "claude-cli/claude-opus-4-8" for d in model_list)
     assert any(d["model_name"] == "claude-cli/claude-sonnet-5" for d in model_list)

@@ -3,6 +3,37 @@ import subprocess
 from open_llm_proxy import cli
 
 
+def test_status_requires_http_readiness(monkeypatch, capsys):
+    launchctl_output = "state = running\n\tpid = 123\n\tstate = active\n"
+    monkeypatch.setattr(
+        cli,
+        "_launchctl",
+        lambda *args: subprocess.CompletedProcess(args, 0, launchctl_output, ""),
+    )
+    monkeypatch.setattr(cli, "_service_is_ready", lambda: False)
+
+    assert cli.main(["status"]) == 1
+    output = capsys.readouterr().out
+    assert "State:   starting (not ready)" in output
+    assert "Health:  unavailable" in output
+    assert "state = active" not in output
+
+
+def test_status_reports_active_only_when_ready(monkeypatch, capsys):
+    launchctl_output = "state = running\n\tpid = 123\n"
+    monkeypatch.setattr(
+        cli,
+        "_launchctl",
+        lambda *args: subprocess.CompletedProcess(args, 0, launchctl_output, ""),
+    )
+    monkeypatch.setattr(cli, "_service_is_ready", lambda: True)
+
+    assert cli.main(["status"]) == 0
+    output = capsys.readouterr().out
+    assert "State:   active" in output
+    assert "Health:  ready" in output
+
+
 def test_help_lists_available_commands(capsys):
     assert cli.main(["help"]) == 0
 
@@ -147,3 +178,271 @@ def test_models_reports_catalog_failure(monkeypatch, capsys):
     assert capsys.readouterr().err == (
         "Error: model discovery failed: Unknown provider\n"
     )
+
+
+def test_auth_all_ok(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+
+    sub_calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: sub_calls.append(args))
+
+    assert cli.main(["auth"]) == 0
+    assert not sub_calls
+    out = capsys.readouterr().out
+    assert "[OK] openrouter: credential discoverable" in out
+    assert "[OK] opencode: credential discoverable" in out
+    assert "[OK] github-copilot: credential discoverable" in out
+    assert "[OK] claude-cli: credential discoverable" in out
+
+
+def test_auth_openrouter_piped(monkeypatch, capsys):
+    import io
+    or_ok = [False]
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (or_ok[0], "missing" if not or_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+
+    saved_keys = []
+    import open_llm_proxy.openrouter_creds
+    monkeypatch.setattr(open_llm_proxy.openrouter_creds, "save_api_key", lambda key: (saved_keys.append(key), or_ok.__setitem__(0, True))[0])
+
+    fake_stdin = io.StringIO("piped_secret_key\n")
+    monkeypatch.setattr(cli.sys, "stdin", fake_stdin)
+    monkeypatch.setattr(fake_stdin, "isatty", lambda: False)
+
+    assert cli.main(["auth"]) == 0
+    assert saved_keys == ["piped_secret_key"]
+    out = capsys.readouterr().out
+    assert "piped_secret_key" not in out
+    assert "[OK] openrouter: credential discoverable" in out
+
+
+def test_auth_openrouter_tty(monkeypatch, capsys):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    or_ok = [False]
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (or_ok[0], "missing" if not or_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+
+    saved_keys = []
+    import open_llm_proxy.openrouter_creds
+    monkeypatch.setattr(
+        open_llm_proxy.openrouter_creds,
+        "get_api_key",
+        lambda: (_ for _ in ()).throw(RuntimeError("missing")),
+    )
+    monkeypatch.setattr(open_llm_proxy.openrouter_creds, "save_api_key", lambda key: (saved_keys.append(key), or_ok.__setitem__(0, True))[0])
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("getpass.getpass", lambda prompt: "tty_secret_key")
+
+    assert cli.main(["auth"]) == 0
+    assert saved_keys == ["tty_secret_key"]
+    out = capsys.readouterr().out
+    assert "tty_secret_key" not in out
+    assert "[OK] openrouter: credential discoverable" in out
+
+
+def test_auth_openrouter_empty(monkeypatch, capsys):
+    import io
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (False, "missing"))
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("   \n"))
+
+    assert cli.main(["auth"]) == 1
+    err = capsys.readouterr().err
+    assert "Error: OpenRouter API key cannot be empty" in err
+
+
+def test_auth_opencode_login(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
+    
+    op_ok = [False]
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (op_ok[0], "missing" if not op_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+
+    sub_calls = []
+    def mock_run(cmd, **kwargs):
+        sub_calls.append(cmd)
+        op_ok[0] = True
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth"]) == 0
+    assert sub_calls == [["opencode", "auth", "login", "https://opencode.ai"]]
+    out = capsys.readouterr().out
+    assert "[OK] opencode: credential discoverable" in out
+
+
+def test_auth_opencode_unavailable(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (False, "missing"))
+
+    def mock_run(cmd, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth"]) == 127
+    err = capsys.readouterr().err
+    assert "Error: opencode command not available" in err
+
+
+def test_auth_opencode_fails(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (False, "missing"))
+
+    def mock_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth"]) == 1
+    err = capsys.readouterr().err
+    assert "Error: opencode auth login failed" in err
+
+
+def test_auth_opencode_unresolved(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (False, "missing"))
+
+    def mock_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth"]) == 1
+    err = capsys.readouterr().err
+    assert "Error: OpenCode credential unresolved after authentication" in err
+
+
+def test_auth_github_copilot_login(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
+    
+    cop_ok = [False]
+    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (cop_ok[0], "missing" if not cop_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
+
+    sub_calls = []
+    def mock_run(cmd, **kwargs):
+        sub_calls.append(cmd)
+        cop_ok[0] = True
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth"]) == 0
+    assert sub_calls == [["opencode", "auth", "login", "https://github.com"]]
+    out = capsys.readouterr().out
+    assert "[OK] github-copilot: credential discoverable" in out
+
+
+def test_auth_claude_cli_login(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_check_openrouter", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
+    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
+    
+    cl_ok = [False]
+    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (cl_ok[0], "missing" if not cl_ok[0] else "credential discoverable"))
+
+    sub_calls = []
+    def mock_run(cmd, **kwargs):
+        sub_calls.append(cmd)
+        cl_ok[0] = True
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth"]) == 0
+    assert sub_calls == [["claude", "auth", "login"]]
+    out = capsys.readouterr().out
+    assert "[OK] claude-cli: credential discoverable" in out
+
+
+def test_auth_check_command(monkeypatch, capsys):
+    from open_llm_proxy import connectivity
+    checked_providers = []
+    results = {
+        "openrouter": (True, "Ready"),
+        "opencode": (False, "Authentication Failed"),
+        "github-copilot": (True, "Ready"),
+        "claude-cli": (True, "Ready"),
+    }
+    def mock_check(p):
+        checked_providers.append(p)
+        return results[p]
+
+    monkeypatch.setattr(connectivity, "check_provider", mock_check)
+
+    assert cli.main(["auth", "check"]) == 1
+    assert checked_providers == ["openrouter", "opencode", "github-copilot", "claude-cli"]
+    captured = capsys.readouterr()
+    assert "[FAILED] opencode: Authentication Failed" in captured.err
+    assert "[OK] openrouter: Ready" in captured.out
+
+
+def test_auth_set_command(monkeypatch, capsys):
+    saved = []
+    import open_llm_proxy.openrouter_creds
+    monkeypatch.setattr(open_llm_proxy.openrouter_creds, "save_api_key", lambda key: saved.append(key))
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("getpass.getpass", lambda prompt: "manual_set_key")
+
+    assert cli.main(["auth", "set", "openrouter"]) == 0
+    assert saved == ["manual_set_key"]
+    assert "manual_set_key" not in capsys.readouterr().out
+
+
+def test_auth_set_opencode(monkeypatch, capsys):
+    op_ok = [False]
+    monkeypatch.setattr(cli, "_check_opencode", lambda: (op_ok[0], "missing" if not op_ok[0] else "credential discoverable"))
+
+    sub_calls = []
+    def mock_run(cmd, **kwargs):
+        sub_calls.append(cmd)
+        op_ok[0] = True
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth", "set", "opencode"]) == 0
+    assert sub_calls == [["opencode", "auth", "login", "https://opencode.ai"]]
+
+
+def test_auth_set_github_copilot(monkeypatch, capsys):
+    cop_ok = [False]
+    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (cop_ok[0], "missing" if not cop_ok[0] else "credential discoverable"))
+
+    sub_calls = []
+    def mock_run(cmd, **kwargs):
+        sub_calls.append(cmd)
+        cop_ok[0] = True
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth", "set", "github-copilot"]) == 0
+    assert sub_calls == [["opencode", "auth", "login", "https://github.com"]]
+
+
+def test_auth_set_claude_cli(monkeypatch, capsys):
+    cl_ok = [False]
+    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (cl_ok[0], "missing" if not cl_ok[0] else "credential discoverable"))
+
+    sub_calls = []
+    def mock_run(cmd, **kwargs):
+        sub_calls.append(cmd)
+        cl_ok[0] = True
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", mock_run)
+
+    assert cli.main(["auth", "set", "claude-cli"]) == 0
+    assert sub_calls == [["claude", "auth", "login"]]

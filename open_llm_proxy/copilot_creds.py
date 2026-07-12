@@ -182,8 +182,8 @@ def _write_opencode_auth_back(copilot_entry: dict) -> None:
         tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         tmp.chmod(0o600)
         tmp.rename(path)
-    except Exception as e:
-        log.warning("copilot: failed to write refreshed token back to auth.json: %s", e)
+    except Exception:
+        log.warning("copilot: failed to write refreshed token back to auth.json")
 
 
 @dataclass
@@ -233,14 +233,14 @@ async def _fetch_short_lived(oauth: str) -> _ShortLived:
         )
     if r.status_code != 200:
         raise CopilotAuthError(
-            f"Token exchange failed: {r.status_code} {r.text[:200]}"
+            f"Token exchange failed: {r.status_code}"
         )
     data = r.json()
     token = data.get("token")
     expires_at = data.get("expires_at")
     if not isinstance(token, str) or not isinstance(expires_at, int):
         raise CopilotAuthError(
-            f"Unexpected token-exchange response shape: keys={list(data)}"
+            "Unexpected token-exchange response shape"
         )
     endpoints = data.get("endpoints") or {}
     api = endpoints.get("api") if isinstance(endpoints, dict) else None
@@ -295,8 +295,8 @@ async def get_copilot_token() -> tuple[str, str]:
                         "copilot: access token expired (%d < %d)",
                         int(expires_sec), int(now),
                     )
-            except Exception as e:
-                log.debug("Failed parsing opencode auth expires: %s", e)
+            except Exception:
+                log.debug("Failed parsing opencode auth expires")
 
     oauth = get_oauth_token()
     if not oauth.startswith("gho_") and not oauth.startswith("ghu_"):
@@ -321,7 +321,7 @@ async def get_copilot_token() -> tuple[str, str]:
             if isinstance(e, CopilotAuthError):
                 log.warning("copilot: token exchange failed, falling back to direct OAuth token")
             else:
-                log.warning("copilot: token exchange error (%s), falling back to direct OAuth token", e)
+                log.warning("copilot: token exchange error, falling back to direct OAuth token")
             fresh = _ShortLived(
                 token=oauth,
                 expires_at=now + 3600,

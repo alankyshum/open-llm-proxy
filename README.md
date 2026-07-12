@@ -106,3 +106,49 @@ fallback cooldown is used. The built-in catalog covers Claude subscriptions,
 GitHub Copilot, Gemini API tiers, OpenRouter, and OpenCode Zen. Catalog entries
 include their source URL and verification date; Gemini's model/project-specific
 limits link to AI Studio because Google does not publish one fixed static quota.
+
+## Authentication
+
+Manage and verify credentials for the supported LLM providers:
+
+```bash
+open-llm-proxy auth
+open-llm-proxy auth set <provider>
+open-llm-proxy auth check [provider]
+```
+
+Credential setup should follow this preferred provider ordering:
+1. `openrouter`
+2. `opencode`
+3. `github-copilot`
+4. `claude-cli`
+
+### Interactive credential entry
+
+When setting keys (especially for `openrouter`), secrets are always acquired via a hidden prompt or piped stdin. They must **never** be passed via command-line arguments (`argv`) to avoid leaking credentials to shell history or process listings:
+
+```bash
+# Using interactive hidden prompt
+open-llm-proxy auth set openrouter
+
+# Or piping stdin
+echo "sk-or-..." | open-llm-proxy auth set openrouter
+```
+
+### Checking status
+
+Validate configured credentials with the check command:
+
+```bash
+# Check all providers
+open-llm-proxy auth check
+
+# Check a specific provider
+open-llm-proxy auth check openrouter
+```
+
+The credential check performs live, read-only validation calls to the provider's API to verify that the credentials are valid and active without executing paid/state-modifying operations.
+
+### Restart requirement
+
+After updating or setting credentials, **restart the proxy** to load the new credentials into the running environment.
