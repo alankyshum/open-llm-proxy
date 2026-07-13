@@ -18,6 +18,7 @@ from open_llm_proxy.callbacks import (
     GeminiThinkingBudgetCallback,
     OllamaReasoningStripCallback,
     ServedByCallback,
+    StickyRoutingCallback,
 )
 from open_llm_proxy.config_gen import (
     configured_model_tokens,
@@ -186,7 +187,12 @@ def setup_callbacks(
         rate_limit_callback = PersistentRateLimitCallback(**policy)
         litellm.callbacks.append(rate_limit_callback)
         log.info("PersistentRateLimitCallback registered.")
-    
+
+    # Register StickyRoutingCallback after PersistentRateLimitCallback
+    if not any(isinstance(c, StickyRoutingCallback) for c in litellm.callbacks):
+        litellm.callbacks.append(StickyRoutingCallback())
+        log.info("StickyRoutingCallback registered.")
+
     # Register Gemini thinking budget callback
     if not any(isinstance(c, GeminiThinkingBudgetCallback) for c in litellm.callbacks):
         gemini_callback = GeminiThinkingBudgetCallback()

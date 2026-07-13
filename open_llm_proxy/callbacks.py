@@ -6,6 +6,7 @@ import copy
 from litellm.integrations.custom_logger import CustomLogger
 
 from open_llm_proxy.attribution import (
+    attribution_id_from_data,
     attribution_id_from_headers,
     global_attribution_store,
     served_by_from_data,
@@ -324,3 +325,59 @@ class ServedByCallback(CustomLogger):
                 pass
             return {"x-open-llm-proxy-served-by": key}
         return {}
+
+
+def _deployment_rate_limit_key(deployment: dict) -> Optional[str]:
+    if not isinstance(deployment, dict):
+        return None
+    model_info = deployment.get("model_info")
+    if not isinstance(model_info, dict):
+        return None
+    key = model_info.get("rate_limit_key")
+    return key if isinstance(key, str) and "/" in key else None
+
+
+class StickyRoutingCallback(CustomLogger):
+    """Session affinity: pin a session to its last-warm deployment.
+
+    Runs AFTER PersistentRateLimitCallback.async_filter_deployments, so the
+    incoming healthy_deployments already exclude any provider on cooldown. If
+    this session's previously-served deployment is still present, return ONLY
+    it, keeping the provider prompt-prefix cache warm across turns. Otherwise
+    return the list unchanged so normal fallback ordering picks the next model.
+
+    Toggle via OPEN_LLM_PROXY_STICKY_ROUTING (default: on).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._enabled = os.environ.get(
+            "OPEN_LLM_PROXY_STICKY_ROUTING", "1"
+        ).lower() not in ("0", "false", "no")
+
+    async def async_filter_deployments(
+        self,
+        model: str,
+        healthy_deployments: list,
+        messages: Any,
+        request_kwargs: Optional[dict] = None,
+        parent_otel_span: Any = None,
+    ) -> list:
+        if not self._enabled or not healthy_deployments or len(healthy_deployments) == 1:
+            return healthy_deployments
+        attr_id = None
+        if isinstance(request_kwargs, dict):
+            attr_id = attribution_id_from_data(request_kwargs)
+        if not attr_id:
+            return healthy_deployments
+        preferred = global_attribution_store.get(attr_id)
+        if not preferred:
+            return healthy_deployments
+        for deployment in healthy_deployments:
+            if _deployment_rate_limit_key(deployment) == preferred:
+                log.info(
+                    "StickyRoutingCallback: pinning session %s to warm deployment %s",
+                    attr_id, preferred,
+                )
+                return [deployment]
+        return healthy_deployments
