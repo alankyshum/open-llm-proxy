@@ -78,6 +78,7 @@ class GeminiThinkingBudgetCallback(CustomLogger):
             ("nemotron-3-ultra-free",   4096, None),
             ("nemotron-3-ultra-550b-a55b", 4096, None),
             ("gpt-5.5",                 4096, None),
+            ("glm-5.2",                 4096, None),
             ("big-pickle",              4096, None),
         ]
 
