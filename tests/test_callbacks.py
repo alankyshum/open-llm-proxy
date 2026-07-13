@@ -170,6 +170,26 @@ async def test_glm5_2_thinking_budget_callback():
 
 
 @pytest.mark.anyio
+async def test_kimi_k2_7_thinking_budget_callback():
+    callback = GeminiThinkingBudgetCallback()
+
+    data = {"model": "openrouter/moonshotai/kimi-k2.7-code", "max_tokens": 16}
+    res = await callback.async_pre_call_hook(None, None, data, "completion")
+    assert res is not None
+    assert res["max_tokens"] == 4096
+
+    data_large = {"model": "openrouter/moonshotai/kimi-k2.7-code", "max_tokens": 8192}
+    res_large = await callback.async_pre_call_hook(None, None, data_large, "completion")
+    assert res_large is None
+    assert data_large["max_tokens"] == 8192
+
+    data_absent = {"model": "moonshotai/kimi-k2.7-code"}
+    res_absent = await callback.async_pre_call_hook(None, None, data_absent, "completion")
+    assert res_absent is not None
+    assert res_absent["max_tokens"] == 4096
+
+
+@pytest.mark.anyio
 async def test_task_tool_enum_injection_callback():
     # disabled by default
     callback_disabled = TaskToolEnumInjectionCallback(enabled=False)
