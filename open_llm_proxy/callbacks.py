@@ -78,6 +78,7 @@ class GeminiThinkingBudgetCallback(CustomLogger):
             ("deepseek-v4-flash-free",  4096, None),
             ("nemotron-3-ultra-free",   4096, None),
             ("nemotron-3-ultra-550b-a55b", 4096, None),
+            ("gpt-5-mini",              4096, None),
             ("gpt-5.5",                 4096, None),
             ("glm-5.2",                 4096, None),
             ("kimi-k2.7-code",          4096, None),

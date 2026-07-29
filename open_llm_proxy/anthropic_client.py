@@ -127,6 +127,19 @@ async def send_messages(payload: dict[str, Any], *, account: str | None = None) 
                 creds.clear_cache(account=account)
                 creds.refresh_anthropic_oauth(stale_token=key, account=account)
                 continue
+            if resp.status_code == 429:
+                retry_after_str = resp.headers.get("retry-after")
+                retry_after: float | None = None
+                if retry_after_str is not None:
+                    try:
+                        retry_after = float(retry_after_str)
+                    except ValueError:
+                        pass
+                raise RateLimitError(
+                    f"Anthropic API error 429: {resp.text}",
+                    retry_after=retry_after,
+                    headers=dict(resp.headers),
+                )
             raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text}")
         return resp.json()
 

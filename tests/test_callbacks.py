@@ -127,6 +127,26 @@ async def test_gpt5_5_thinking_budget_callback():
 
 
 @pytest.mark.anyio
+async def test_gpt5_mini_thinking_budget_callback():
+    callback = GeminiThinkingBudgetCallback()
+
+    data = {"model": "github-copilot/gpt-5-mini", "max_tokens": 16}
+    res = await callback.async_pre_call_hook(None, None, data, "completion")
+    assert res is not None
+    assert res["max_tokens"] == 4096
+
+    data_large = {"model": "github-copilot/gpt-5-mini", "max_tokens": 8192}
+    res_large = await callback.async_pre_call_hook(None, None, data_large, "completion")
+    assert res_large is None
+    assert data_large["max_tokens"] == 8192
+
+    data_absent = {"model": "gpt-5-mini"}
+    res_absent = await callback.async_pre_call_hook(None, None, data_absent, "completion")
+    assert res_absent is not None
+    assert res_absent["max_tokens"] == 4096
+
+
+@pytest.mark.anyio
 async def test_big_pickle_thinking_budget_callback():
     callback = GeminiThinkingBudgetCallback()
 
