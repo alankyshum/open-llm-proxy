@@ -6,7 +6,8 @@ from open_llm_proxy.attribution import global_attribution_store
 from open_llm_proxy.callbacks import StickyRoutingCallback
 
 
-def test_pin_when_present():
+def test_pin_when_present(monkeypatch):
+    monkeypatch.setenv("OPEN_LLM_PROXY_STICKY_ROUTING", "1")
     attr_id = str(uuid.uuid4())
     winner = "github-copilot/gemini-3.5-flash"
     global_attribution_store.set(attr_id, winner)
@@ -35,6 +36,12 @@ def test_pin_when_present():
 
     assert len(res) == 1
     assert res[0]["model_info"]["rate_limit_key"] == winner
+
+
+def test_default_is_disabled(monkeypatch):
+    monkeypatch.delenv("OPEN_LLM_PROXY_STICKY_ROUTING", raising=False)
+    callback = StickyRoutingCallback()
+    assert callback._enabled is False
 
 
 def test_passthrough_when_winner_absent():

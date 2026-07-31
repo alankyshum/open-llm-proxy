@@ -347,13 +347,13 @@ class StickyRoutingCallback(CustomLogger):
     it, keeping the provider prompt-prefix cache warm across turns. Otherwise
     return the list unchanged so normal fallback ordering picks the next model.
 
-    Toggle via OPEN_LLM_PROXY_STICKY_ROUTING (default: on).
+     Toggle via OPEN_LLM_PROXY_STICKY_ROUTING (default: off).
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._enabled = os.environ.get(
-            "OPEN_LLM_PROXY_STICKY_ROUTING", "1"
+            "OPEN_LLM_PROXY_STICKY_ROUTING", "0"
         ).lower() not in ("0", "false", "no")
 
     async def async_filter_deployments(
