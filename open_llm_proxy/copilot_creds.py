@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import os
 import shutil
@@ -12,6 +13,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -23,7 +25,8 @@ def get_fallback_path() -> Path:
     return Path.home() / ".config" / "open-llm-proxy" / "copilot.json"
 
 
-_TOKEN_EXCHANGE_URL = "https://api.github.com/copilot_internal/v2/token"
+_COPILOT_USER_URL = "https://api.github.com/copilot_internal/user"
+_DEFAULT_ENDPOINT = "https://api.githubcopilot.com"
 
 EDITOR_VERSION = "vscode/1.95.3"
 EDITOR_PLUGIN_VERSION = "copilot-chat/0.26.7"
@@ -194,13 +197,12 @@ class _ShortLived:
 
 
 _short_lived: Optional[_ShortLived] = None
-_short_lived_lock = threading.Lock()
+_short_lived_lock = asyncio.Lock()
 
 
 def invalidate_short_lived() -> None:
     global _short_lived
-    with _short_lived_lock:
-        _short_lived = None
+    _short_lived = None
 
 
 def _exchange_token_headers(oauth: str) -> dict[str, str]:
@@ -216,37 +218,49 @@ def _exchange_token_headers(oauth: str) -> dict[str, str]:
     }
 
 
+def _valid_endpoint_url(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme == "https"
+            and parsed.netloc != ""
+            and parsed.hostname is not None
+            and parsed.username is None
+            and parsed.password is None
+        )
+    except ValueError:
+        return False
+
+
 async def _fetch_short_lived(oauth: str) -> _ShortLived:
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(
-            _TOKEN_EXCHANGE_URL, headers=_exchange_token_headers(oauth),
+            _COPILOT_USER_URL, headers=_exchange_token_headers(oauth),
         )
     if r.status_code == 401:
         clear_oauth_cache()
         raise CopilotAuthError(
-            "GitHub returned 401 from /copilot_internal/v2/token — stored OAuth token is invalid or revoked."
+            "GitHub returned 401 from /copilot_internal/user — stored OAuth token is invalid or revoked."
         )
     if r.status_code == 404:
         raise CopilotAuthError(
-            "GitHub returned 404 from /copilot_internal/v2/token — stored OAuth token lacks the required 'copilot' scope. "
+            "GitHub returned 404 from /copilot_internal/user — stored OAuth token lacks the required 'copilot' scope. "
             "Regenerate the token by running a Copilot task in opencode or re-authenticating."
         )
     if r.status_code != 200:
         raise CopilotAuthError(
-            f"Token exchange failed: {r.status_code}"
+            f"Copilot endpoint discovery failed: {r.status_code}"
         )
     data = r.json()
-    token = data.get("token")
-    expires_at = data.get("expires_at")
-    if not isinstance(token, str) or not isinstance(expires_at, int):
-        raise CopilotAuthError(
-            "Unexpected token-exchange response shape"
-        )
     endpoints = data.get("endpoints") or {}
     api = endpoints.get("api") if isinstance(endpoints, dict) else None
-    if not isinstance(api, str) or not api:
-        api = "https://api.githubcopilot.com"
-    return _ShortLived(token=token, expires_at=expires_at, endpoints_api=api)
+    if not _valid_endpoint_url(api):
+        api = _DEFAULT_ENDPOINT
+    # OpenCode-issued gho_/ghu_ tokens are accepted directly by the Copilot
+    # endpoint; the VS Code token-exchange endpoint rejects them with 403.
+    return _ShortLived(token=oauth, expires_at=int(time.time()) + 3600, endpoints_api=api)
 
 
 async def get_copilot_token() -> tuple[str, str]:
@@ -256,6 +270,17 @@ async def get_copilot_token() -> tuple[str, str]:
     if _short_lived is not None and (_short_lived.expires_at - now) > 60:
         return _short_lived.token, _short_lived.endpoints_api
 
+    # Hold the async lock across discovery and all cache population. This is
+    # deliberately single-flight: startup callers must not stampede GitHub.
+    async with _short_lived_lock:
+        now = int(time.time())
+        if _short_lived is not None and (_short_lived.expires_at - now) > 60:
+            return _short_lived.token, _short_lived.endpoints_api
+        return await _get_copilot_token_locked(now)
+
+
+async def _get_copilot_token_locked(now: int) -> tuple[str, str]:
+    global _short_lived
     copilot_data = _read_opencode_auth_data()
     if copilot_data:
         access = copilot_data.get("access")
@@ -281,10 +306,9 @@ async def get_copilot_token() -> tuple[str, str]:
                     fresh = _ShortLived(
                         token=access,
                         expires_at=int(expires_sec),
-                        endpoints_api="https://api.githubcopilot.com",
+                        endpoints_api=_DEFAULT_ENDPOINT,
                     )
-                    with _short_lived_lock:
-                        _short_lived = fresh
+                    _short_lived = fresh
                     log.info(
                         "copilot: using unexpired access token from opencode auth (expires_at=%d)",
                         fresh.expires_at,
@@ -303,7 +327,7 @@ async def get_copilot_token() -> tuple[str, str]:
         fresh = _ShortLived(
             token=oauth,
             expires_at=now + 3600,
-            endpoints_api="https://api.githubcopilot.com",
+            endpoints_api=_DEFAULT_ENDPOINT,
         )
     else:
         try:
@@ -313,10 +337,9 @@ async def get_copilot_token() -> tuple[str, str]:
                 copilot_data["access"] = fresh.token
                 copilot_data["expires"] = fresh.expires_at
                 _write_opencode_auth_back(copilot_data)
-        except (CopilotAuthError, Exception) as e:
-            # Exchange failed (e.g. 404 for opencode's OAuth tokens which lack
-            # the copilot_internal/v2 scope). Fall back to using the raw OAuth
-            # token directly against api.githubcopilot.com — GitHub Copilot
+        except Exception as e:
+            # Discovery failed. Fall back to using the raw OAuth token directly
+            # against the default Copilot endpoint — GitHub Copilot
             # endpoints accept raw gho_/ghu_ tokens directly.
             if isinstance(e, CopilotAuthError):
                 log.warning("copilot: token exchange failed, falling back to direct OAuth token")
@@ -325,11 +348,10 @@ async def get_copilot_token() -> tuple[str, str]:
             fresh = _ShortLived(
                 token=oauth,
                 expires_at=now + 3600,
-                endpoints_api="https://api.githubcopilot.com",
+                endpoints_api=_DEFAULT_ENDPOINT,
             )
 
-    with _short_lived_lock:
-        _short_lived = fresh
+    _short_lived = fresh
     log.info(
         "copilot: refreshed short-lived token (expires_at=%d, api=%s)",
         fresh.expires_at, fresh.endpoints_api,

@@ -8,11 +8,43 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import time
+import asyncio
 
 import pytest
 import httpx
 
 from open_llm_proxy import copilot_creds
+
+
+@pytest.mark.parametrize(
+    "endpoint, expected",
+    [
+        ("not-a-url", False),
+        ("https://", False),
+        ("http://insecure.example", False),
+        ("https://user:pw@host", False),
+        ("https://valid.example", True),
+    ],
+)
+def test_valid_endpoint_url(endpoint, expected):
+    assert copilot_creds._valid_endpoint_url(endpoint) is expected
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "endpoint",
+    ["not-a-url", "https://", "http://insecure.example", "https://user:pw@host"],
+)
+async def test_endpoint_discovery_invalid_endpoint_falls_back(
+    monkeypatch, endpoint,
+):
+    monkeypatch.setenv("COPILOT_OAUTH_TOKEN", "ghu_endpoint_test")
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 200
+    response.json.return_value = {"endpoints": {"api": endpoint}}
+    with patch("httpx.AsyncClient.get", return_value=response):
+        _, api_url = await copilot_creds.get_copilot_token()
+    assert api_url == copilot_creds._DEFAULT_ENDPOINT
 
 
 @pytest.fixture(autouse=True)
@@ -115,13 +147,37 @@ async def test_get_copilot_token_token_exchange(monkeypatch, isolated_auth_path)
     # Patch httpx.AsyncClient.get
     with patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
         token, api_url = await copilot_creds.get_copilot_token()
-        assert token == "session_tok_123"
+        assert token == "ghu_valid_oauth"
         assert api_url == "https://api.custom-copilot.com"
         mock_get.assert_called_once()
+        assert mock_get.call_args.args[0] == "https://api.github.com/copilot_internal/user"
         headers_sent = mock_get.call_args[1]["headers"]
         assert headers_sent["Copilot-Integration-Id"] == "vscode-chat"
         assert headers_sent["Authorization"] == "Bearer ghu_valid_oauth"
         assert "X-Request-Id" in headers_sent
+
+
+@pytest.mark.anyio
+async def test_get_copilot_token_single_flight(monkeypatch):
+    monkeypatch.setenv("COPILOT_OAUTH_TOKEN", "ghu_concurrent")
+    monkeypatch.setattr(copilot_creds, "_read_opencode_auth_data", lambda: None)
+    calls = 0
+
+    async def fetch(oauth):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        return copilot_creds._ShortLived(
+            token=oauth, expires_at=int(time.time()) + 3600,
+            endpoints_api="https://api.enterprise.githubcopilot.com",
+        )
+
+    monkeypatch.setattr(copilot_creds, "_fetch_short_lived", fetch)
+    results = await asyncio.gather(*(
+        copilot_creds.get_copilot_token() for _ in range(10)
+    ))
+    assert calls == 1
+    assert all(result == results[0] for result in results)
 
 @pytest.mark.anyio
 async def test_get_copilot_token_unexpired_access(monkeypatch, isolated_auth_path):
@@ -148,15 +204,13 @@ async def test_get_copilot_token_expired_access_goes_to_exchange(monkeypatch, is
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "token": "session_tok_exchanged",
-        "expires_at": int(time.time() + 3600),
         "endpoints": {"api": "https://api.githubcopilot.com"}
     }
 
     with patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data), \
          patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
         token, api_url = await copilot_creds.get_copilot_token()
-        assert token == "session_tok_exchanged"
+        assert token == "gho_refresh_oauth"
         mock_get.assert_called_once()
         # Verify the gho_refresh_oauth token was used in Authorization header during exchange
         headers_sent = mock_get.call_args[1]["headers"]
@@ -204,19 +258,17 @@ async def test_get_copilot_token_writes_back_to_auth_json(monkeypatch, isolated_
     mock_response.status_code = 200
     future_ts = int(time.time()) + 3600
     mock_response.json.return_value = {
-        "token": "session_tok_persisted",
-        "expires_at": future_ts,
         "endpoints": {"api": "https://api.githubcopilot.com"},
     }
 
     with patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
         token, _ = await copilot_creds.get_copilot_token()
-        assert token == "session_tok_persisted"
+        assert token == "gho_valid_refresh"
 
     updated = json.loads(isolated_auth_path.read_text(encoding="utf-8"))
     cp = updated["github-copilot"]
-    assert cp["access"] == "session_tok_persisted"
-    assert cp["expires"] == future_ts
+    assert cp["access"] == "gho_valid_refresh"
+    assert cp["expires"] > int(time.time())
     assert cp["refresh"] == "gho_valid_refresh"
     assert cp["type"] == "oauth"
     assert not isolated_auth_path.with_suffix(".json.tmp").exists()
