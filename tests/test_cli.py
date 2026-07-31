@@ -349,7 +349,18 @@ def test_auth_github_copilot_login(monkeypatch, capsys):
     monkeypatch.setattr(cli.subprocess, "run", mock_run)
 
     assert cli.main(["auth", "--no-tui"]) == 0
-    assert sub_calls == [["opencode", "auth", "login", "https://github.com"]]
+    assert sub_calls == [
+        [
+            "opencode",
+            "auth",
+            "login",
+            "--provider",
+            "github-copilot",
+            "--method",
+            "Login with GitHub Copilot",
+        ]
+    ]
+    assert "https://github.com" not in sub_calls[0]
     out = capsys.readouterr().out
     assert "[OK] github-copilot: credential discoverable" in out
 
@@ -438,7 +449,18 @@ def test_auth_set_github_copilot(monkeypatch, capsys):
     monkeypatch.setattr(cli.subprocess, "run", mock_run)
 
     assert cli.main(["auth", "set", "github-copilot"]) == 0
-    assert sub_calls == [["opencode", "auth", "login", "https://github.com"]]
+    assert sub_calls == [
+        [
+            "opencode",
+            "auth",
+            "login",
+            "--provider",
+            "github-copilot",
+            "--method",
+            "Login with GitHub Copilot",
+        ]
+    ]
+    assert "https://github.com" not in sub_calls[0]
 
 
 def test_auth_set_claude_cli(monkeypatch, capsys):

@@ -279,7 +279,17 @@ def _run_opencode_login() -> int:
 
 def _run_github_copilot_login() -> int:
     try:
-        res = subprocess.run(["opencode", "auth", "login", "https://github.com"])
+        res = subprocess.run(
+            [
+                "opencode",
+                "auth",
+                "login",
+                "--provider",
+                "github-copilot",
+                "--method",
+                "Login with GitHub Copilot",
+            ]
+        )
         if res.returncode != 0:
             print("Error: github-copilot auth login failed", file=sys.stderr)
             return res.returncode
