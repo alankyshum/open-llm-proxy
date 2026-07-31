@@ -20,6 +20,9 @@ from open_llm_proxy.provider_github_copilot import (
     _ensure_object_schemas_have_properties,
     copilot_chat_to_responses,
     copilot_responses_to_chat,
+    _send_with_429_retry,
+    _log_429_diagnostic,
+    _redact_429_diagnostic,
 )
 
 
@@ -44,6 +47,118 @@ def test_endpoint_heuristic_routing():
     assert handler._heuristic_fallback("gpt-5-mini") == "/chat/completions"
     assert handler._heuristic_fallback("claude-sonnet-5") == "/chat/completions"
     assert handler._heuristic_fallback("gemini-2.5-pro") == "/chat/completions"
+
+
+@pytest.mark.anyio
+async def test_429_retries_once_then_returns_second_429(monkeypatch):
+    first = httpx.Response(
+        429,
+        headers={"retry-after": "0.01", "x-request-id": "req-1"},
+        stream=httpx.ByteStream(b"temporary"),
+        request=httpx.Request("POST", "https://api.example.test"),
+    )
+    second = httpx.Response(
+        429,
+        headers={"retry-after": "0.01"},
+        stream=httpx.ByteStream(b"still limited"),
+        request=httpx.Request("POST", "https://api.example.test"),
+    )
+    send = AsyncMock(side_effect=[second])
+    monkeypatch.setattr("open_llm_proxy.provider_github_copilot.asyncio.sleep", AsyncMock())
+
+    result = await _send_with_429_retry(
+        first, send, model="gpt-5-mini", endpoint="https://api.example.test",
+    )
+    assert result is second
+    send.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_streaming_429_retries_and_raises_custom_error(monkeypatch):
+    handler = GithubCopilotLLM()
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
+    monkeypatch.setattr(
+        handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
+    )
+    monkeypatch.setattr(
+        "open_llm_proxy.provider_github_copilot.asyncio.sleep", AsyncMock()
+    )
+
+    responses = [
+        httpx.Response(
+            429,
+            headers={"retry-after": "0.01", "x-request-id": "req-1"},
+            stream=httpx.ByteStream(b"Bearer gho_stream_secret"),
+            request=httpx.Request("POST", "https://api.copilot.com/chat/completions"),
+        ),
+        httpx.Response(
+            429,
+            headers={"retry-after": "0.01"},
+            stream=httpx.ByteStream(b"still limited"),
+            request=httpx.Request("POST", "https://api.copilot.com/chat/completions"),
+        ),
+    ]
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.build_request = MagicMock()
+    client.send = AsyncMock(side_effect=responses)
+    monkeypatch.setattr(handler, "_get_client", AsyncMock(return_value=client))
+
+    with pytest.raises(CustomLLMError) as exc_info:
+        async for _ in handler.astreaming(
+            model="github-copilot/gpt-5-mini",
+            messages=[{"role": "user", "content": "hi"}],
+        ):
+            pass
+
+    assert exc_info.value.status_code == 429
+    assert client.send.await_count == 2
+
+
+def test_429_diagnostic_redacts_before_truncation(caplog):
+    response = httpx.Response(
+        429,
+        text="upstream echo: Bearer gho_test_secret and gho_other_secret",
+    )
+    with caplog.at_level("WARNING", logger="open_llm_proxy.provider_github_copilot"):
+        _log_429_diagnostic(response, "gpt-5-mini", "https://api.example.test")
+
+    message = caplog.records[-1].message
+    assert "gho_test_secret" not in message
+    assert "gho_other_secret" not in message
+    assert "[REDACTED]" in message
+    assert message.count("[REDACTED]") == 2
+
+
+@pytest.mark.parametrize(
+    ("text", "secrets"),
+    [
+        (
+            "Authorization: Bearer arbitrary_secret_not_prefixed_by_github_token",
+            ["arbitrary_secret_not_prefixed_by_github_token"],
+        ),
+        ("authorization: bearer SECRET", ["SECRET"]),
+        ("Authorization: gho_abc123", ["gho_abc123"]),
+        ("Bearer SECRET", ["SECRET"]),
+        (
+            "Bearer first_secret and gho_second_secret",
+            ["first_secret", "gho_second_secret"],
+        ),
+        ("prefix\nBearer newline_secret", ["newline_secret"]),
+        (
+            'Bearer semicolon_secret; Bearer comma_secret, Bearer quote_secret"',
+            ["semicolon_secret", "comma_secret", "quote_secret"],
+        ),
+    ],
+)
+def test_429_diagnostic_redacts_all_secret_forms(text, secrets):
+    redacted = _redact_429_diagnostic(text)
+
+    for secret in secrets:
+        assert secret not in redacted
 
 
 @pytest.mark.anyio

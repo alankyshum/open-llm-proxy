@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 import logging
+import random
 import re
 import time
 import uuid
@@ -17,6 +18,70 @@ from open_llm_proxy import copilot_creds
 from open_llm_proxy.errors import custom_rate_limit_error, upstream_http_error
 
 log = logging.getLogger("open_llm_proxy.provider_github_copilot")
+
+MAX_429_RETRY_AFTER_SECONDS = 2.0
+MAX_429_ATTEMPTS = 2
+MAX_429_DIAGNOSTIC_BODY = 500
+_SENSITIVE_TOKEN_RE = re.compile(
+    r"(?i)(?:Authorization:\s*(?:Bearer\s+)?|Bearer\s+)[^\s,;]+|"
+    r"\b(?:gho|ghu|ghp|ghs)_[A-Za-z0-9_\-]+"
+)
+
+
+def _redact_429_diagnostic(text: str) -> str:
+    return _SENSITIVE_TOKEN_RE.sub("[REDACTED]", text)
+
+
+def _retry_after_seconds(headers: Any) -> Optional[float]:
+    value = headers.get("retry-after") if headers else None
+    try:
+        return max(0.0, float(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _log_429_diagnostic(response: Any, model: str, endpoint: str) -> None:
+    headers = dict(getattr(response, "headers", {}) or {})
+    rate_headers = {
+        key: value for key, value in headers.items()
+        if key.lower().startswith("x-ratelimit-")
+    }
+    request_id = next(
+        (value for key, value in headers.items() if key.lower() in {
+            "x-github-request-id", "x-copilot-request-id", "x-request-id",
+        }), None,
+    )
+    try:
+        raw_body = response.text
+    except (httpx.ResponseNotRead, RuntimeError):
+        # Streaming responses have no synchronously readable body. Headers are
+        # sufficient for diagnosing rate limits and must not turn a 429 into a
+        # generic 500 via ResponseNotRead.
+        raw_body = "<streaming body unavailable>"
+    body = _redact_429_diagnostic(str(raw_body))[:MAX_429_DIAGNOSTIC_BODY]
+    log.warning(
+        "Copilot 429: status=%s body=%r retry_after=%r rate_headers=%r "
+        "service_request_id=%r model=%s endpoint=%s",
+        getattr(response, "status_code", None), body,
+        headers.get("retry-after"), rate_headers, request_id, model, endpoint,
+    )
+
+
+async def _send_with_429_retry(response, req_func, *, model: str, endpoint: str):
+    for attempt in range(MAX_429_ATTEMPTS - 1):
+        _log_429_diagnostic(response, model, endpoint)
+        retry_after = _retry_after_seconds(response.headers)
+        if attempt + 1 >= MAX_429_ATTEMPTS or (
+            retry_after is not None and retry_after > MAX_429_RETRY_AFTER_SECONDS
+        ):
+            return response
+        if hasattr(response, "aclose"):
+            await response.aclose()
+        await asyncio.sleep((retry_after or 0.0) + random.uniform(0.01, 0.1))
+        response = await req_func()
+        if response.status_code != 429:
+            return response
+    return response
 
 
 def _ensure_object_schemas_have_properties(node: Any) -> None:
@@ -520,6 +585,10 @@ class GithubCopilotLLM(CustomLLM):
                     headers["Authorization"] = f"Bearer {new_token}"
                     resp = await req_func()
                 if resp.status_code == 429:
+                    resp = await _send_with_429_retry(
+                        resp, req_func, model=model_str, endpoint=base_url,
+                    )
+                if resp.status_code == 429:
                     raise custom_rate_limit_error(
                         "Rate limited",
                         headers=dict(resp.headers),
@@ -730,6 +799,10 @@ class GithubCopilotLLM(CustomLLM):
                     new_token, _ = await copilot_creds.get_copilot_token()
                     headers["Authorization"] = f"Bearer {new_token}"
                     resp = await req_func()
+                if resp.status_code == 429:
+                    resp = await _send_with_429_retry(
+                        resp, req_func, model=model_str, endpoint=base_url,
+                    )
                 if resp.status_code == 429:
                     raise custom_rate_limit_error(
                         "Rate limited",
