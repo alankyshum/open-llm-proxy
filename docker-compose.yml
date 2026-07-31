@@ -5,7 +5,7 @@ services:
   postgres:
     image: docker.io/library/postgres:16-alpine
     container_name: open-llm-proxy-postgres
-    restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_USER: litellm
       POSTGRES_PASSWORD: litellm
