@@ -1,5 +1,5 @@
 # open-llm-proxy
-Lightweight litellm Router proxy
+open-llm-proxy is a LiteLLM-based Router proxy with an open-llm-proxy CLI for serving, setup, configuration, model discovery, and the Admin UI. It ships the LiteLLM Admin UI by default for virtual-key management and request/spend tracking, while safely degrading to a stateless DB-less router when DATABASE_URL is not configured.
 
 ## CLI
 
