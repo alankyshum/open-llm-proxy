@@ -82,6 +82,7 @@ class GeminiThinkingBudgetCallback(CustomLogger):
             ("gpt-5.5",                 4096, None),
             ("glm-5.2",                 4096, None),
             ("kimi-k2.7-code",          4096, None),
+            ("qwen3.7-plus",            4096, None),
             ("big-pickle",              4096, None),
         ]
 

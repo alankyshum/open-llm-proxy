@@ -210,6 +210,21 @@ async def test_kimi_k2_7_thinking_budget_callback():
 
 
 @pytest.mark.anyio
+async def test_qwen3_7_plus_thinking_budget_callback():
+    callback = GeminiThinkingBudgetCallback()
+
+    data = {"model": "openrouter/qwen/qwen3.7-plus", "max_tokens": 16}
+    res = await callback.async_pre_call_hook(None, None, data, "completion")
+    assert res is not None
+    assert res["max_tokens"] == 4096
+
+    data_large = {"model": "openrouter/qwen/qwen3.7-plus", "max_tokens": 8192}
+    res_large = await callback.async_pre_call_hook(None, None, data_large, "completion")
+    assert res_large is None
+    assert data_large["max_tokens"] == 8192
+
+
+@pytest.mark.anyio
 async def test_task_tool_enum_injection_callback():
     # disabled by default
     callback_disabled = TaskToolEnumInjectionCallback(enabled=False)
