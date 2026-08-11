@@ -15,9 +15,9 @@ def test_configured_model_tokens(tmp_path):
 opencode:
   settings:
     model: "open-llm-proxy/[claude-cli/claude-sonnet-5,google/gemini-3.5-flash]"
-agents:
-  reviewer:
-    model: "openrouter/z-ai/glm-5.2"
+  agents:
+    reviewer:
+      model: "openrouter/z-ai/glm-5.2"
 """
     )
 
@@ -108,13 +108,13 @@ opencode:
     model: "open-llm-proxy/[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
     small_model: "github-copilot/gpt-5-mini"
 
-agents:
-  lead: {
-    model: "github-copilot/claude-opus-4.8"
-  }
-  code-reviewer: {
-    model: "github-copilot/gpt-5.5"
-  }
+  agents:
+    lead: {
+      model: "github-copilot/claude-opus-4.8"
+    }
+    code-reviewer: {
+      model: "github-copilot/gpt-5.5"
+    }
 """
     config_file = tmp_path / "agent-config.yml"
     config_file.write_text(dummy_yaml)
@@ -173,6 +173,32 @@ agents:
     assert router_settings["num_retries"] == 0
     assert router_settings["disable_cooldowns"] is False
 
+
+def test_generate_config_includes_bracketed_agent_chains(tmp_path):
+    config_file = tmp_path / "agent-config.yml"
+    config_file.write_text(
+        """
+opencode:
+  settings:
+    model: "github-copilot/gpt-5-mini"
+  agents:
+    first:
+      model: "open-llm-proxy/[github-copilot/gpt-5.6-luna,github-copilot/gpt-5.6-terra]"
+    second:
+      model: "open-llm-proxy/[claude-cli/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
+"""
+    )
+    model_names = {deployment["model_name"] for deployment in generate_config(str(config_file))["model_list"]}
+    assert "[github-copilot/gpt-5.6-luna;github-copilot/gpt-5.6-terra]" in model_names
+    assert "[claude-cli/claude-sonnet-5;openrouter/z-ai/glm-5.2]" in model_names
+
+
+@pytest.mark.parametrize("agents", [None, {}])
+def test_empty_agent_mapping_raises_value_error(tmp_path, agents):
+    config_file = tmp_path / "agent-config.yml"
+    config_file.write_text("opencode:\n  agents: " + ("{}" if agents == {} else "null") + "\n")
+    with pytest.raises(ValueError, match="no model strings"):
+        generate_config(str(config_file))
 
 def test_parse_fallback_chain_with_account():
     # Single token with @account

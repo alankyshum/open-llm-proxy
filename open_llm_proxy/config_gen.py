@@ -194,36 +194,42 @@ def parse_agent_config(source: str | bytes) -> dict:
     return data
 
 
-def configured_model_tokens_from_data(data: dict) -> set[str]:
-    """Extract concrete provider/model keys from parsed agent config."""
-
-    model_strings = set()
-    
-    # Extract opencode.settings model strings
-    opencode_settings = (data.get("opencode") or {}).get("settings", {})
-    if isinstance(opencode_settings, dict):
-        if "model" in opencode_settings:
-            model_strings.add(opencode_settings["model"])
-        if "small_model" in opencode_settings:
-            model_strings.add(opencode_settings["small_model"])
-        # Extract supported_models
-        supported_models = opencode_settings.get("supported_models", [])
+def _collect_model_strings(data: dict) -> set[str]:
+    """Collect model selectors from settings and configured agents."""
+    model_strings: set[str] = set()
+    opencode = data.get("opencode") or {}
+    settings = opencode.get("settings", {}) if isinstance(opencode, dict) else {}
+    if isinstance(settings, dict):
+        for key in ("model", "small_model"):
+            model = settings.get(key)
+            if isinstance(model, str):
+                model_strings.add(model)
+        supported_models = settings.get("supported_models", [])
         if isinstance(supported_models, list):
-            for m in supported_models:
-                if isinstance(m, str):
-                    # Supported models are bare tokens like "claude-cli/claude-sonnet-5"
-                    # We need to wrap them as if they were plain models
-                    model_strings.add(f"open-llm-proxy/{m}")
-    
-    # Extract agents model strings
-    agents = data.get("agents", {})
+            for model in supported_models:
+                if isinstance(model, str):
+                    model_strings.add(f"open-llm-proxy/{model}")
+
+    # Agents live under `opencode.agents`; the top-level `agents` key was renamed.
+    agents = opencode.get("agents", {}) if isinstance(opencode, dict) else {}
     if isinstance(agents, dict):
-        for agent_name, agent_cfg in agents.items():
-            if isinstance(agent_cfg, dict) and "model" in agent_cfg:
+        for agent_cfg in agents.values():
+            if isinstance(agent_cfg, dict) and isinstance(agent_cfg.get("model"), str):
                 model_strings.add(agent_cfg["model"])
 
+    if not model_strings:
+        raise ValueError(
+            "agent config contains no model strings; expected models under "
+            "opencode.settings (model, small_model, supported_models) or "
+            "opencode.agents.<name>.model"
+        )
+    return model_strings
+
+
+def configured_model_tokens_from_data(data: dict) -> set[str]:
+    """Extract concrete provider/model keys from parsed agent config."""
     tokens: set[str] = set()
-    for raw_model in model_strings:
+    for raw_model in _collect_model_strings(data):
         tokens.update(parse_fallback_chain(raw_model))
     return tokens
 
@@ -237,18 +243,7 @@ def configured_model_tokens(agent_config_path: str | Path) -> set[str]:
 def generate_config_from_data(data: dict) -> dict:
     """Generate LiteLLM config from one parsed agent-config snapshot."""
 
-    model_strings = set()
-    opencode_settings = (data.get("opencode") or {}).get("settings", {})
-    if isinstance(opencode_settings, dict):
-        for key in ("model", "small_model"):
-            if key in opencode_settings:
-                model_strings.add(opencode_settings[key])
-        for model in opencode_settings.get("supported_models", []):
-            if isinstance(model, str):
-                model_strings.add(f"open-llm-proxy/{model}")
-    for agent_cfg in (data.get("agents") or {}).values():
-        if isinstance(agent_cfg, dict) and "model" in agent_cfg:
-            model_strings.add(agent_cfg["model"])
+    model_strings = _collect_model_strings(data)
 
     deployments = {}
     fallbacks = []

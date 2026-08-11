@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Deployment contract: bin/sync-agents deploys only configuration. Proxy code reaches
+# the running launchd service (com.user.open-llm-proxy, using ~/.local/share/open-llm-proxy)
+# only through this script followed by launchctl kickstart -k gui/$(id -u)/com.user.open-llm-proxy.
 
 SUBMODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOTFILES_ROOT="$(cd "$SUBMODULE_DIR/../.." && pwd)"
