@@ -17,8 +17,8 @@ from open_llm_proxy.reloader import ConfigReloader, config_sha256
 def _source(model: str = "vendor/model-a", *, policy: dict | None = None) -> dict:
     return {
         "rate_limit_policy": policy or {},
-        "file_settings": {
-            "opencode": {
+        "opencode": {
+            "settings": {
                 "model": f"open-llm-proxy/{model}",
                 "supported_models": [model],
             }

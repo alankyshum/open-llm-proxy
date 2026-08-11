@@ -199,23 +199,21 @@ def configured_model_tokens_from_data(data: dict) -> set[str]:
 
     model_strings = set()
     
-    # Extract file_settings model strings
-    file_settings = data.get("file_settings", {})
-    if isinstance(file_settings, dict):
-        opencode_settings = file_settings.get("opencode", {})
-        if isinstance(opencode_settings, dict):
-            if "model" in opencode_settings:
-                model_strings.add(opencode_settings["model"])
-            if "small_model" in opencode_settings:
-                model_strings.add(opencode_settings["small_model"])
-            # Extract supported_models
-            supported_models = opencode_settings.get("supported_models", [])
-            if isinstance(supported_models, list):
-                for m in supported_models:
-                    if isinstance(m, str):
-                        # Supported models are bare tokens like "claude-cli/claude-sonnet-5"
-                        # We need to wrap them as if they were plain models
-                        model_strings.add(f"open-llm-proxy/{m}")
+    # Extract opencode.settings model strings
+    opencode_settings = (data.get("opencode") or {}).get("settings", {})
+    if isinstance(opencode_settings, dict):
+        if "model" in opencode_settings:
+            model_strings.add(opencode_settings["model"])
+        if "small_model" in opencode_settings:
+            model_strings.add(opencode_settings["small_model"])
+        # Extract supported_models
+        supported_models = opencode_settings.get("supported_models", [])
+        if isinstance(supported_models, list):
+            for m in supported_models:
+                if isinstance(m, str):
+                    # Supported models are bare tokens like "claude-cli/claude-sonnet-5"
+                    # We need to wrap them as if they were plain models
+                    model_strings.add(f"open-llm-proxy/{m}")
     
     # Extract agents model strings
     agents = data.get("agents", {})
@@ -240,16 +238,14 @@ def generate_config_from_data(data: dict) -> dict:
     """Generate LiteLLM config from one parsed agent-config snapshot."""
 
     model_strings = set()
-    file_settings = data.get("file_settings", {})
-    if isinstance(file_settings, dict):
-        opencode_settings = file_settings.get("opencode", {})
-        if isinstance(opencode_settings, dict):
-            for key in ("model", "small_model"):
-                if key in opencode_settings:
-                    model_strings.add(opencode_settings[key])
-            for model in opencode_settings.get("supported_models", []):
-                if isinstance(model, str):
-                    model_strings.add(f"open-llm-proxy/{model}")
+    opencode_settings = (data.get("opencode") or {}).get("settings", {})
+    if isinstance(opencode_settings, dict):
+        for key in ("model", "small_model"):
+            if key in opencode_settings:
+                model_strings.add(opencode_settings[key])
+        for model in opencode_settings.get("supported_models", []):
+            if isinstance(model, str):
+                model_strings.add(f"open-llm-proxy/{model}")
     for agent_cfg in (data.get("agents") or {}).values():
         if isinstance(agent_cfg, dict) and "model" in agent_cfg:
             model_strings.add(agent_cfg["model"])

@@ -43,7 +43,7 @@ def test_serve_cli_options_parsing(monkeypatch):
 def test_launch_server_ui_default_on_degrades_without_db(monkeypatch, tmp_path):
     """UI is ON by default but gracefully degrades (no crash) when no DB is configured."""
     config_path = tmp_path / "agent-config.yml"
-    config_path.write_text("file_settings:\n  opencode:\n    model: open-llm-proxy/google/gemini-flash\n")
+    config_path.write_text("opencode:\n  settings:\n    model: open-llm-proxy/google/gemini-flash\n")
 
     monkeypatch.setattr("open_llm_proxy.server_launcher.setup_callbacks", lambda *args, **kwargs: None)
     monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config_from_data", lambda *args, **kwargs: {})
@@ -65,7 +65,7 @@ def test_launch_server_ui_default_on_degrades_without_db(monkeypatch, tmp_path):
 def test_launch_server_ui_autogenerates_master_key_with_db(monkeypatch, tmp_path):
     """When a DB is present and UI is on, a master key is auto-provisioned (no crash)."""
     config_path = tmp_path / "agent-config.yml"
-    config_path.write_text("file_settings:\n  opencode:\n    model: open-llm-proxy/google/gemini-flash\n")
+    config_path.write_text("opencode:\n  settings:\n    model: open-llm-proxy/google/gemini-flash\n")
 
     monkeypatch.setattr("open_llm_proxy.server_launcher.setup_callbacks", lambda *args, **kwargs: None)
     monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config_from_data", lambda *args, **kwargs: {})
@@ -89,7 +89,7 @@ def test_launch_server_ui_autogenerates_master_key_with_db(monkeypatch, tmp_path
 def test_launch_server_allows_db_less_operation_when_ui_disabled(monkeypatch, tmp_path):
     """When UI is disabled, launch_server doesn't require master key or DB URL."""
     config_path = tmp_path / "agent-config.yml"
-    config_path.write_text("file_settings:\n  opencode:\n    model: open-llm-proxy/google/gemini-flash\n")
+    config_path.write_text("opencode:\n  settings:\n    model: open-llm-proxy/google/gemini-flash\n")
 
     monkeypatch.setattr("open_llm_proxy.server_launcher.setup_callbacks", lambda *args, **kwargs: None)
     monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config_from_data", lambda *args, **kwargs: {})
@@ -110,7 +110,7 @@ def test_launch_server_allows_db_less_operation_when_ui_disabled(monkeypatch, tm
 def test_launch_server_precedence_argument_over_env(monkeypatch, tmp_path):
     """Arguments should take precedence over existing environment variables."""
     config_path = tmp_path / "agent-config.yml"
-    config_path.write_text("file_settings:\n  opencode:\n    model: open-llm-proxy/google/gemini-flash\n")
+    config_path.write_text("opencode:\n  settings:\n    model: open-llm-proxy/google/gemini-flash\n")
 
     monkeypatch.setattr("open_llm_proxy.server_launcher.setup_callbacks", lambda *args, **kwargs: None)
     monkeypatch.setattr("open_llm_proxy.server_launcher.generate_config_from_data", lambda *args, **kwargs: {})

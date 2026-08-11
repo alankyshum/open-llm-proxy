@@ -18,8 +18,8 @@ rate_limit_policy:
   plans:
     claude-cli: pro
     google: free
-file_settings:
-  opencode:
+opencode:
+  settings:
     model: "open-llm-proxy/[claude-cli/claude-sonnet-5,google/gemini-3.5-flash]"
 """
     )

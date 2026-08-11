@@ -132,8 +132,8 @@ async def test_generated_chain_keeps_ordered_fallback_after_primary_cooldown(tmp
     config_path = tmp_path / "agent-config.yml"
     config_path.write_text(
         """
-file_settings:
-  opencode:
+opencode:
+  settings:
     model: "open-llm-proxy/[google/gemini-3.5-flash,github-copilot/gemini-3.5-flash]"
 """
     )

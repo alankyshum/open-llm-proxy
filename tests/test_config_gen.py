@@ -12,8 +12,8 @@ def test_configured_model_tokens(tmp_path):
     config_file = tmp_path / "agent-config.yml"
     config_file.write_text(
         """
-file_settings:
-  opencode:
+opencode:
+  settings:
     model: "open-llm-proxy/[claude-cli/claude-sonnet-5,google/gemini-3.5-flash]"
 agents:
   reviewer:
@@ -103,8 +103,8 @@ def test_map_token_to_deployment_params(monkeypatch):
 def test_generate_config_real(tmp_path):
     # Create a dummy agent-config.yml
     dummy_yaml = """
-file_settings:
-  opencode:
+opencode:
+  settings:
     model: "open-llm-proxy/[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
     small_model: "github-copilot/gpt-5-mini"
 
@@ -234,8 +234,8 @@ def test_map_token_to_deployment_params_with_account(monkeypatch):
 
 def test_generate_config_with_account(tmp_path):
     dummy_yaml = """
-file_settings:
-  opencode:
+opencode:
+  settings:
     model: "open-llm-proxy/[claude-cli@work/claude-opus-4-8,claude-cli@home/claude-opus-4-8,github-copilot/claude-opus-4.8]"
     small_model: "claude-cli@default/claude-sonnet-5"
 """
@@ -290,8 +290,8 @@ def test_invalid_claude_cli_id():
 
 def test_supported_models_config_gen(tmp_path):
     dummy_yaml = """
-file_settings:
-  opencode:
+opencode:
+  settings:
     model: "github-copilot/gpt-5-mini"
     supported_models:
       - "claude-cli/claude-opus-4-8"
