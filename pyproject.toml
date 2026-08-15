@@ -7,7 +7,7 @@ packages = ["open_llm_proxy"]
 
 [project]
 name = "open-llm-proxy"
-version = "0.3.0"
+version = "0.3.1"
 description = "Lightweight litellm Router proxy"
 readme = "README.md"
 requires-python = ">=3.10"

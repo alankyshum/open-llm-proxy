@@ -34,6 +34,8 @@ upstream, because providers accept only the OpenAI `text` and `image_url` part
 types. Standard `text` and `image_url` parts are retained; image attachments
 become `image_url` parts, and text-like data URIs are decoded inline. This is
 shape- and MIME-driven rather than tied to specific models or providers.
+Images sent to `/responses`-routed GitHub Copilot models are translated to the
+`input_image` shape.
 
 Normalization is enabled by default. Set
 `OPEN_LLM_PROXY_NORMALIZE_ATTACHMENTS=0` (also `false` or `no`) to disable it.
