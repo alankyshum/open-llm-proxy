@@ -95,6 +95,36 @@ def _read_fallback_file() -> Optional[str]:
     return tok if isinstance(tok, str) and tok else None
 
 
+def _write_fallback_file(token: str) -> None:
+    """Mirror *token* into the last-resort fallback file (mode 0600).
+
+    OpenCode owns ``auth.json`` and may rotate or clear it at any time. Without
+    a mirrored copy that leaves no Copilot credential at all on the next
+    process start, because a live proxy only keeps the token in memory.
+    """
+    path = get_fallback_path()
+    try:
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+        else:
+            data = {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    if data.get("oauth_token") == token:
+        return
+    data["oauth_token"] = token
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        tmp.chmod(0o600)
+        tmp.replace(path)
+    except OSError:
+        log.warning("copilot: failed to mirror OAuth token to %s", path)
+
+
 def _get_opencode_auth_path() -> Path:
     path_str = os.environ.get("OPENCODE_AUTH_PATH")
     if path_str:
@@ -158,6 +188,8 @@ def get_oauth_token() -> str:
         tok = _read_opencode_auth()
         if tok:
             _oauth_token_cache = tok
+            # Keep a durable copy; auth.json is owned by OpenCode.
+            _write_fallback_file(tok)
             return tok
 
         tok = _read_fallback_file()

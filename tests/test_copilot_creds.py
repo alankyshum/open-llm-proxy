@@ -85,6 +85,53 @@ def test_get_oauth_token_from_opencode_auth(monkeypatch, tmp_path):
     assert copilot_creds.get_oauth_token() == "ghu_opencode123"
 
 
+def test_opencode_token_is_mirrored_to_fallback_file(monkeypatch, tmp_path):
+    """A token read from OpenCode is persisted so it survives auth.json loss."""
+    monkeypatch.delenv("COPILOT_OAUTH_TOKEN", raising=False)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    auth_json = fake_home / ".local" / "share" / "opencode" / "auth.json"
+    auth_json.parent.mkdir(parents=True)
+    auth_json.write_text(json.dumps({
+        "github-copilot": {"refresh": "ghu_mirrored123"}
+    }), encoding="utf-8")
+
+    assert copilot_creds.get_oauth_token() == "ghu_mirrored123"
+
+    fallback_file = fake_home / ".config" / "open-llm-proxy" / "copilot.json"
+    assert fallback_file.is_file()
+    assert json.loads(fallback_file.read_text())["oauth_token"] == "ghu_mirrored123"
+    assert fallback_file.stat().st_mode & 0o777 == 0o600
+
+    # OpenCode clears its auth.json; the mirrored copy keeps Copilot alive.
+    auth_json.unlink()
+    copilot_creds.clear_oauth_cache()
+    assert copilot_creds.get_oauth_token() == "ghu_mirrored123"
+
+
+def test_opencode_token_mirror_does_not_shadow_rotated_token(monkeypatch, tmp_path):
+    """OpenCode stays authoritative; a stale mirror must never win."""
+    monkeypatch.delenv("COPILOT_OAUTH_TOKEN", raising=False)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    fallback_file = fake_home / ".config" / "open-llm-proxy" / "copilot.json"
+    fallback_file.parent.mkdir(parents=True)
+    fallback_file.write_text(json.dumps({"oauth_token": "ghu_stale"}), encoding="utf-8")
+
+    auth_json = fake_home / ".local" / "share" / "opencode" / "auth.json"
+    auth_json.parent.mkdir(parents=True)
+    auth_json.write_text(json.dumps({
+        "github-copilot": {"refresh": "ghu_rotated"}
+    }), encoding="utf-8")
+
+    assert copilot_creds.get_oauth_token() == "ghu_rotated"
+    assert json.loads(fallback_file.read_text())["oauth_token"] == "ghu_rotated"
+
+
 def test_get_oauth_token_from_fallback_file(monkeypatch, tmp_path):
     monkeypatch.delenv("COPILOT_OAUTH_TOKEN", raising=False)
     fake_home = tmp_path / "home"
