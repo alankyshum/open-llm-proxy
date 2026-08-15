@@ -8,6 +8,8 @@ import json
 from typing import Any
 from urllib.parse import unquote_to_bytes
 
+from open_llm_proxy.attachment_spool import spool_attachment
+
 
 _TEXT_MIME_TYPES = {"application/json", "application/xml"}
 # Tool parts are preserved because the downstream translator handles their pairing.
@@ -123,13 +125,30 @@ def _normalize_part(part: Any) -> dict:
                 "text": _attachment_header(filename, mime) + text,
             }
 
-        byte_count = len(uri_bytes) if uri_bytes is not None else None
+        payload = uri_bytes
+        if payload is None and isinstance(value, str) and value:
+            payload = _raw_base64(value)
+        byte_count = len(payload) if payload is not None else None
         if byte_count is None and isinstance(value, str) and value:
-            decoded = _raw_base64(value)
-            byte_count = len(decoded) if decoded is not None else len(value.encode("utf-8"))
+            byte_count = len(value.encode("utf-8"))
         label = filename or "attachment"
         mime_label = mime or "unknown mime"
         size = f", {byte_count} bytes" if byte_count is not None else ""
+
+        # Non-renderable bytes are spooled to disk so the agent can read the
+        # file with its own tools instead of receiving a dead placeholder.
+        if payload:
+            spooled = spool_attachment(payload, filename, mime)
+            if spooled is not None:
+                return {
+                    "type": "text",
+                    "text": (
+                        f"[attachment: {label} ({mime_label}){size}]\n"
+                        f"Saved to: {spooled}\n"
+                        "Read this file from disk to access its contents."
+                    ),
+                }
+
         return {
             "type": "text",
             "text": (

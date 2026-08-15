@@ -30,13 +30,40 @@ with case-insensitive `--search`, or use `--format json` from scripts. The
 ## Attachment content normalization
 
 The proxy normalizes non-standard chat attachment parts before forwarding them
-upstream. Standard `text` and `image_url` parts are retained; image attachments
-become `image_url` parts, while documents and other non-renderable attachments
-become descriptive text parts. Text-like data URIs are decoded into text. This
-is shape- and MIME-driven rather than tied to specific models or providers.
+upstream, because providers accept only the OpenAI `text` and `image_url` part
+types. Standard `text` and `image_url` parts are retained; image attachments
+become `image_url` parts, and text-like data URIs are decoded inline. This is
+shape- and MIME-driven rather than tied to specific models or providers.
 
 Normalization is enabled by default. Set
 `OPEN_LLM_PROXY_NORMALIZE_ATTACHMENTS=0` (also `false` or `no`) to disable it.
+
+### Path spooling for non-renderable attachments
+
+Anything that is neither text-like nor an image — a PDF, an archive, a binary
+blob — cannot be inlined. Instead of emitting a dead placeholder, the proxy
+**writes the decoded bytes to disk** and hands the agent the absolute path:
+
+```
+[attachment: invoice.pdf (application/pdf), 48213 bytes]
+Saved to: /Users/you/.local/share/open-llm-proxy/attachments/ab12cd34ef567890-invoice.pdf
+Read this file from disk to access its contents.
+```
+
+The agent then uses its own file-reading tools on that path. The proxy performs
+no format-specific parsing and makes no assumptions about model capabilities.
+
+Spooled filenames are **content-addressed** — `<sha256[:16]>-<safe-name>` — so a
+fallback chain retrying the same request against the next model reuses the
+existing file rather than writing duplicates. Writes are atomic, the spool
+directory is created `0700` and files are written `0600`. Spooling is entirely
+best effort: on any failure the old descriptive placeholder is used instead.
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `OPEN_LLM_PROXY_SPOOL_ATTACHMENTS` | `1` | Kill switch. Set to `0`/`false`/`no` to restore the plain placeholder. |
+| `OPEN_LLM_PROXY_ATTACHMENT_DIR` | `~/.local/share/open-llm-proxy/attachments` | Where spooled attachments are written. |
+| `OPEN_LLM_PROXY_ATTACHMENT_RETENTION_DAYS` | `7` | Spooled files older than this are pruned on each write. `0` disables pruning. |
 
 `open-llm-proxy` ships the LiteLLM Admin UI as a first-class feature for virtual
 key management and request/spend tracking. **The UI is enabled by default** — it
