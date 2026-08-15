@@ -30,6 +30,31 @@ def test_standard_parts_and_strings_are_identity_noops():
     assert normalize_content("hello") == "hello"
 
 
+@pytest.mark.parametrize("part_type", ["tool_result", "tool-result"])
+def test_tool_result_parts_are_identity_noops(part_type):
+    part = {"type": part_type, "tool_use_id": "tool-1", "content": "result"}
+    messages = [{"role": "user", "content": [part]}]
+
+    result = normalize_messages(messages)
+
+    assert result is messages
+    assert result[0]["content"][0] is part
+
+
+def test_tool_result_is_preserved_while_file_is_normalized():
+    tool_result = {"type": "tool_result", "tool_call_id": "tool-1", "content": "result"}
+    messages = [{"role": "user", "content": [
+        tool_result,
+        {"type": "file", "filename": "a.pdf", "data": "data:application/pdf;base64,JVBERg=="},
+    ]}]
+
+    result = normalize_messages(messages)
+
+    assert result is not messages
+    assert result[0]["content"][0] is tool_result
+    assert result[0]["content"][1]["type"] == "text"
+
+
 def test_malformed_part_does_not_raise_and_message_keys_are_preserved():
     messages = [{"role": "tool", "name": "n", "tool_call_id": "id", "content": [object()]}]
     result = normalize_messages(messages)

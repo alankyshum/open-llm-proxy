@@ -10,6 +10,8 @@ from urllib.parse import unquote_to_bytes
 
 
 _TEXT_MIME_TYPES = {"application/json", "application/xml"}
+# Tool parts are preserved because the downstream translator handles their pairing.
+_TRANSLATOR_PASSTHROUGH_PART_TYPES = {"toolresult", "tooluse"}
 
 
 def _walk(value: Any, depth: int = 0):
@@ -78,6 +80,8 @@ def _normalize_part(part: Any) -> dict:
             return {"type": "text", "text": str(part)}
 
         part_type = part.get("type")
+        if _normal_key(part_type) in _TRANSLATOR_PASSTHROUGH_PART_TYPES:
+            return part
         if part_type == "text":
             if "text" in part:
                 return part
