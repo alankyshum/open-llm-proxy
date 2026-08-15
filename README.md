@@ -27,6 +27,17 @@ with case-insensitive `--search`, or use `--format json` from scripts. The
 
 ## LiteLLM Admin UI (first-class, on by default)
 
+## Attachment content normalization
+
+The proxy normalizes non-standard chat attachment parts before forwarding them
+upstream. Standard `text` and `image_url` parts are retained; image attachments
+become `image_url` parts, while documents and other non-renderable attachments
+become descriptive text parts. Text-like data URIs are decoded into text. This
+is shape- and MIME-driven rather than tied to specific models or providers.
+
+Normalization is enabled by default. Set
+`OPEN_LLM_PROXY_NORMALIZE_ATTACHMENTS=0` (also `false` or `no`) to disable it.
+
 `open-llm-proxy` ships the LiteLLM Admin UI as a first-class feature for virtual
 key management and request/spend tracking. **The UI is enabled by default** — it
 only needs a PostgreSQL database. The proxy is fail-safe: if no `DATABASE_URL` is

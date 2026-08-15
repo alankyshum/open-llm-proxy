@@ -5,6 +5,8 @@ import logging
 import copy
 from litellm.integrations.custom_logger import CustomLogger
 
+from open_llm_proxy.content_parts import normalize_messages
+
 from open_llm_proxy.attribution import (
     attribution_id_from_data,
     attribution_id_from_headers,
@@ -13,6 +15,26 @@ from open_llm_proxy.attribution import (
 )
 
 log = logging.getLogger("open_llm_proxy.callbacks")
+
+
+class AttachmentContentNormalizationCallback(CustomLogger):
+    """Ensure upstreams see only OpenAI ``text`` and ``image_url`` parts."""
+
+    async def async_pre_call_hook(
+        self, user_api_key_dict: Any, cache: Any, data: dict, call_type: str
+    ) -> Optional[dict]:
+        enabled = os.environ.get("OPEN_LLM_PROXY_NORMALIZE_ATTACHMENTS", "1")
+        if enabled.lower() in ("0", "false", "no"):
+            return None
+        messages = data.get("messages")
+        if not isinstance(messages, list):
+            return None
+        normalized = normalize_messages(messages)
+        if normalized is messages:
+            return None
+        data["messages"] = normalized
+        log.info("AttachmentContentNormalizationCallback: normalized attachment parts")
+        return data
 
 # Regex for extracting agent types from task description
 _AGENT_LIST_RE = re.compile(

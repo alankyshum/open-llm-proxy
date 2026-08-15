@@ -14,6 +14,7 @@ print("SERVER_LAUNCHER: Importing litellm...", flush=True)
 import litellm
 print("SERVER_LAUNCHER: Importing open_llm_proxy callbacks/config...", flush=True)
 from open_llm_proxy.callbacks import (
+    AttachmentContentNormalizationCallback,
     FallbackChainCommaRewriterCallback,
     GeminiThinkingBudgetCallback,
     OllamaReasoningStripCallback,
@@ -172,6 +173,12 @@ def setup_callbacks(
     install_gemini_shared_state_isolation()
     if not hasattr(litellm, "callbacks") or litellm.callbacks is None:
         litellm.callbacks = []
+
+    if not any(
+        isinstance(c, AttachmentContentNormalizationCallback) for c in litellm.callbacks
+    ):
+        litellm.callbacks.append(AttachmentContentNormalizationCallback())
+        log.info("AttachmentContentNormalizationCallback registered.")
 
     rate_limit_callback = next(
         (c for c in litellm.callbacks if isinstance(c, PersistentRateLimitCallback)),
