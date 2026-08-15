@@ -185,6 +185,36 @@ def _has_image_part(body: dict[str, Any]) -> bool:
     return False
 
 
+def _image_url_to_input_image(part: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Translate a chat ``image_url`` part into the ``/responses`` ``input_image``.
+
+    The Copilot ``/responses`` endpoint rejects ``image_url`` outright::
+
+        Invalid value: 'image_url'. Supported values are: 'input_text',
+        'input_image', 'output_text', ...
+
+    Its image part is ``{"type": "input_image", "image_url": "<url or data uri>"}``
+    where ``image_url`` is a bare string rather than the chat ``{"url": ...}``
+    object. Returns ``None`` when no URL can be recovered so the caller can pass
+    the original part through untouched.
+    """
+    value = part.get("image_url")
+    url: Optional[str] = None
+    if isinstance(value, str):
+        url = value
+    elif isinstance(value, dict):
+        candidate = value.get("url")
+        if isinstance(candidate, str):
+            url = candidate
+    if not url:
+        return None
+    translated: dict[str, Any] = {"type": "input_image", "image_url": url}
+    detail = value.get("detail") if isinstance(value, dict) else part.get("detail")
+    if isinstance(detail, str) and detail:
+        translated["detail"] = detail
+    return translated
+
+
 def copilot_chat_to_responses(body: dict[str, Any]) -> dict[str, Any]:
     res = {
         k: v
@@ -277,6 +307,9 @@ def copilot_chat_to_responses(body: dict[str, Any]) -> dict[str, Any]:
                                     "type": text_part_type,
                                     "text": part.get("text", ""),
                                 })
+                            elif part.get("type") == "image_url":
+                                translated = _image_url_to_input_image(part)
+                                mapped_content.append(translated or part)
                             else:
                                 mapped_content.append(part)
                         else:

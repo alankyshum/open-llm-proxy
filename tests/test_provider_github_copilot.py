@@ -688,3 +688,73 @@ async def test_live_copilot_gpt_5_mini_chat_path():
     content = res.choices[0].message.content
     assert content is not None
     assert "pong" in content.lower()
+
+
+class TestResponsesImagePartTranslation:
+    """The /responses endpoint rejects chat ``image_url`` parts outright.
+
+    Verified live against api.enterprise.githubcopilot.com: sending
+    ``{"type": "image_url", ...}`` to /responses returns HTTP 400
+    ``Invalid value: 'image_url'. Supported values are: 'input_text',
+    'input_image', ...`` while the translated ``input_image`` shape returns 200.
+    """
+
+    def test_image_url_object_becomes_input_image_with_string_url(self):
+        url = "data:image/png;base64,aGVsbG8="
+        req = {
+            "model": "gpt-5.6-sol",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "what colour?"},
+                {"type": "image_url", "image_url": {"url": url}},
+            ]}],
+        }
+
+        content = copilot_chat_to_responses(req)["input"][0]["content"]
+
+        assert content[0] == {"type": "input_text", "text": "what colour?"}
+        assert content[1] == {"type": "input_image", "image_url": url}
+
+    def test_bare_string_image_url_is_also_translated(self):
+        req = {"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": "https://example.com/a.png"},
+        ]}]}
+
+        part = copilot_chat_to_responses(req)["input"][0]["content"][0]
+
+        assert part == {"type": "input_image", "image_url": "https://example.com/a.png"}
+
+    def test_detail_hint_is_preserved(self):
+        req = {"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "https://x/a.png", "detail": "high"}},
+        ]}]}
+
+        part = copilot_chat_to_responses(req)["input"][0]["content"][0]
+
+        assert part["type"] == "input_image" and part["detail"] == "high"
+
+    def test_no_image_url_type_survives_translation(self):
+        req = {"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "hi"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}},
+        ]}]}
+
+        for item in copilot_chat_to_responses(req)["input"]:
+            for part in item["content"]:
+                assert part.get("type") != "image_url"
+
+    def test_unrecoverable_image_part_passes_through_untouched(self):
+        part = {"type": "image_url", "image_url": {}}
+        req = {"messages": [{"role": "user", "content": [part]}]}
+
+        assert copilot_chat_to_responses(req)["input"][0]["content"][0] is part
+
+    def test_assistant_and_other_part_types_are_unaffected(self):
+        req = {"messages": [
+            {"role": "assistant", "content": [{"type": "text", "text": "prior"}]},
+            {"role": "user", "content": [{"type": "input_file", "filename": "a.pdf"}]},
+        ]}
+
+        result = copilot_chat_to_responses(req)["input"]
+
+        assert result[0]["content"][0]["type"] == "output_text"
+        assert result[1]["content"][0] == {"type": "input_file", "filename": "a.pdf"}
