@@ -2,7 +2,7 @@
 
 ## Install and run locally
 
-Install with `uv tool install .` or `python -m pip install .`. Create an `agent-config.yml` containing at least one model under `opencode.settings.model` or `opencode.agents.<name>.model`, then authenticate that provider with `open-llm-proxy auth add <provider>`.
+Install with `uv tool install .` (recommended) or `python -m pip install .`. Create an `agent-config.yml` containing at least one model under `opencode.settings.model` or `opencode.agents.<name>.model`, then authenticate that provider with `open-llm-proxy auth add <provider>`.
 
 The portable configuration lookup order is documented in [Configuration](configuration.md). Start the service with:
 

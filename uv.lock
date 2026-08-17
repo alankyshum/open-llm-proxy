@@ -1955,7 +1955,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", extras = ["http2"], specifier = ">=0.28.1" },
-    { name = "litellm", extras = ["proxy"], specifier = ">=1.91.1" },
+    { name = "litellm", extras = ["proxy"], specifier = ">=1.91.1,<1.95.0" },
     { name = "prisma", specifier = ">=0.15.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.4.0" },

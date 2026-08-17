@@ -21,6 +21,7 @@
 ## Install
 
 ```bash
+# uv is recommended for a reproducible install; pip is supported as an alternative.
 uv tool install .
 # or
 python -m pip install .

@@ -27,7 +27,8 @@ classifiers = [
     "Topic :: Internet :: Proxy Servers",
 ]
 dependencies = [
-    "litellm[proxy]>=1.91.1",
+    # LiteLLM 1.95+ imports FastAPI's removed get_flat_dependant; lift after upstream compatibility is restored.
+    "litellm[proxy]>=1.91.1,<1.95.0",
     "prisma>=0.15.0",
     "httpx[http2]>=0.28.1",
     "pyyaml>=6.0.3",
