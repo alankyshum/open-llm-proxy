@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0.0"]
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -11,6 +11,7 @@ version = "0.3.1"
 description = "Lightweight litellm Router proxy"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 keywords = ["llm", "proxy", "litellm", "openai", "anthropic"]
 classifiers = [
@@ -26,10 +27,10 @@ classifiers = [
     "Topic :: Internet :: Proxy Servers",
 ]
 dependencies = [
-    "litellm[proxy]",
-    "prisma",
-    "httpx[http2]",
-    "pyyaml",
+    "litellm[proxy]>=1.91.1",
+    "prisma>=0.15.0",
+    "httpx[http2]>=0.28.1",
+    "pyyaml>=6.0.3",
     "questionary>=2.0.0"
 ]
 
@@ -43,7 +44,8 @@ Issues = "https://github.com/alankyshum/open-llm-proxy/issues"
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "ruff"
+    "pytest-asyncio>=1.4.0",
+    "ruff",
 ]
 
 [dependency-groups]

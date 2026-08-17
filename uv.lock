@@ -1942,6 +1942,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
 
@@ -1953,11 +1954,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", extras = ["http2"] },
-    { name = "litellm", extras = ["proxy"] },
-    { name = "prisma" },
+    { name = "httpx", extras = ["http2"], specifier = ">=0.28.1" },
+    { name = "litellm", extras = ["proxy"], specifier = ">=1.91.1" },
+    { name = "prisma", specifier = ">=0.15.0" },
     { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pyyaml" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.4.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "questionary", specifier = ">=2.0.0" },
     { name = "ruff", marker = "extra == 'dev'" },
 ]
