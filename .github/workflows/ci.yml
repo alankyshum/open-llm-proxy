@@ -3,6 +3,8 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
 
 jobs:
   test:
@@ -26,6 +28,22 @@ jobs:
       - run: uv sync --all-extras --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+
+  unlocked-deps:
+    # Fresh upstream resolutions are intentionally non-blocking: this monitors
+    # the moving end-user dependency set without making unrelated PRs unmergeable.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv venv .venv-shipped
+      - run: uv pip install --python .venv-shipped/bin/python --resolution highest ".[dev]"
+      - run: .venv-shipped/bin/python -c "from importlib.metadata import version; import fastapi, litellm; print(f'litellm={version(\"litellm\")} fastapi={version(\"fastapi\")}')"
+      - run: .venv-shipped/bin/python -m pytest -q -m "not integration"
+      - run: .venv-shipped/bin/open-llm-proxy --help
 
   secrets:
     runs-on: ubuntu-latest
