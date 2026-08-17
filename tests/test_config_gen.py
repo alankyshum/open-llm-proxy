@@ -11,8 +11,14 @@ from open_llm_proxy.config_gen import (
 
 
 @pytest.fixture(autouse=True)
-def provide_dummy_openrouter_key(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "DUMMY-NOT-A-SECRET-openrouter-key")
+def provide_dummy_openrouter_key(monkeypatch, tmp_path):
+    config_dir = tmp_path / "test_credentials"
+    config_dir.mkdir()
+    monkeypatch.setenv("OLP_CONFIG_DIR", str(config_dir))
+    (config_dir / "env").write_text(
+        "OPENROUTER_API_KEY=DUMMY-NOT-A-SECRET-openrouter-key\n",
+        encoding="utf-8",
+    )
 
 
 def test_configured_model_tokens(tmp_path):
