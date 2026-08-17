@@ -36,6 +36,11 @@ def _source_environment_names() -> set[str]:
 
 
 SOURCE_ENVIRONMENT_NAMES = frozenset(_source_environment_names())
+PROVIDER_CREDENTIAL_NAMES = frozenset(
+    name
+    for name in SOURCE_ENVIRONMENT_NAMES
+    if name.endswith(("_API_KEY", "_AUTH_TOKEN", "_OAUTH_TOKEN")) or name.endswith("_AUTH_PATH")
+)
 
 
 def _clear_source_environment() -> None:
@@ -65,7 +70,7 @@ def isolate_import_environment():
 @pytest.fixture(autouse=True)
 def isolate_test_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Give every test an isolated home and no ambient source environment."""
-    for name in SOURCE_ENVIRONMENT_NAMES:
+    for name in PROVIDER_CREDENTIAL_NAMES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
