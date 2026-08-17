@@ -13,9 +13,7 @@ class MockResponse:
         tool_calls: Any = None,
     ):
         self.choices = [
-            SimpleNamespace(
-                message=SimpleNamespace(content=content, tool_calls=tool_calls)
-            )
+            SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=tool_calls))
         ]
         self.model = model
         self._hidden_params = {}
@@ -35,51 +33,39 @@ def test_hidden_model_id_fallback(monkeypatch):
     response = MockResponse()
     response._hidden_params = {"model_id": "test-deployment-id"}
     mock_router = SimpleNamespace(
-        get_model_info=lambda *, id: {
-            "model_info": {"rate_limit_key": "anthropic/claude-3.5-sonnet"}
-        }
-        if id == "test-deployment-id"
-        else None
+        get_model_info=lambda *, id: (
+            {"model_info": {"rate_limit_key": "anthropic/claude-3.5-sonnet"}}
+            if id == "test-deployment-id"
+            else None
+        )
     )
 
     import litellm.proxy.proxy_server as proxy_server
 
     monkeypatch.setattr(proxy_server, "llm_router", mock_router)
-    headers = asyncio.run(
-        callback.async_post_call_response_headers_hook({}, None, response)
-    )
-    assert headers == {
-        "x-open-llm-proxy-served-by": "anthropic/claude-3.5-sonnet"
-    }
+    headers = asyncio.run(callback.async_post_call_response_headers_hook({}, None, response))
+    assert headers == {"x-open-llm-proxy-served-by": "anthropic/claude-3.5-sonnet"}
 
 
 def test_no_metadata_empty_mapping():
     callback = ServedByCallback()
-    headers = asyncio.run(
-        callback.async_post_call_response_headers_hook({}, None, MockResponse())
-    )
+    headers = asyncio.run(callback.async_post_call_response_headers_hook({}, None, MockResponse()))
     assert headers == {}
 
 
 def test_streaming_and_nonstream_payload_unchanged():
     callback = ServedByCallback()
     response = MockResponse(content="Keep original content untouched")
-    data = {
-        "deployment": {"model_info": {"rate_limit_key": "google/gemini-1.5"}}
-    }
+    data = {"deployment": {"model_info": {"rate_limit_key": "google/gemini-1.5"}}}
     asyncio.run(callback.async_post_call_response_headers_hook(data, None, response))
     assert response.choices[0].message.content == "Keep original content untouched"
 
 
 def test_tool_calls_unchanged():
     callback = ServedByCallback()
-    tool_calls = [
-        {"id": "call_1", "type": "function", "function": {"name": "get_weather"}}
-    ]
+    tool_calls = [{"id": "call_1", "type": "function", "function": {"name": "get_weather"}}]
     response = MockResponse(content=None, tool_calls=tool_calls)
-    data = {
-        "deployment": {"model_info": {"rate_limit_key": "google/gemini-1.5"}}
-    }
+    data = {"deployment": {"model_info": {"rate_limit_key": "google/gemini-1.5"}}}
     asyncio.run(callback.async_post_call_response_headers_hook(data, None, response))
     assert response.choices[0].message.tool_calls == tool_calls
 
@@ -114,9 +100,7 @@ def test_no_served_by_content_in_body():
 
 def test_no_banner_for_streaming_and_tool_calls():
     callback = ServedByCallback()
-    tool_calls = [
-        {"id": "tc1", "type": "function", "function": {"name": "f"}}
-    ]
+    tool_calls = [{"id": "tc1", "type": "function", "function": {"name": "f"}}]
     response = MockResponse(content=None, tool_calls=tool_calls)
     data = {"deployment": {"model_info": {"rate_limit_key": "openai/gpt-4"}}}
     asyncio.run(callback.async_post_call_response_headers_hook(data, None, response))

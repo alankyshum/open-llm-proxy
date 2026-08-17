@@ -1,11 +1,10 @@
-from typing import Any, Dict, List, Optional
+import copy
+import logging
 import os
 import re
-import logging
-import copy
-from litellm.integrations.custom_logger import CustomLogger
+from typing import Any
 
-from open_llm_proxy.content_parts import normalize_messages
+from litellm.integrations.custom_logger import CustomLogger
 
 from open_llm_proxy.attribution import (
     attribution_id_from_data,
@@ -13,6 +12,7 @@ from open_llm_proxy.attribution import (
     global_attribution_store,
     served_by_from_data,
 )
+from open_llm_proxy.content_parts import normalize_messages
 
 log = logging.getLogger("open_llm_proxy.callbacks")
 
@@ -22,7 +22,7 @@ class AttachmentContentNormalizationCallback(CustomLogger):
 
     async def async_pre_call_hook(
         self, user_api_key_dict: Any, cache: Any, data: dict, call_type: str
-    ) -> Optional[dict]:
+    ) -> dict | None:
         enabled = os.environ.get("OPEN_LLM_PROXY_NORMALIZE_ATTACHMENTS", "1")
         if enabled.lower() in ("0", "false", "no"):
             return None
@@ -36,11 +36,13 @@ class AttachmentContentNormalizationCallback(CustomLogger):
         log.info("AttachmentContentNormalizationCallback: normalized attachment parts")
         return data
 
+
 # Regex for extracting agent types from task description
 _AGENT_LIST_RE = re.compile(
     r"Available agent types[^\n]*:\s*\n((?:[ \t]*-[ \t]*[A-Za-z][\w\-]*[^\n]*\n?)+)",
 )
 _AGENT_NAME_RE = re.compile(r"^[ \t]*-[ \t]*([A-Za-z][\w\-]*)\s*:", re.MULTILINE)
+
 
 def _extract_agent_types(description: str) -> list[str]:
     if not isinstance(description, str) or not description:
@@ -57,6 +59,7 @@ def _extract_agent_types(description: str) -> list[str]:
             seen.add(name)
             names.append(name)
     return names
+
 
 def _rewrite_task_tool(tool: dict[str, Any]) -> bool:
     fn = tool.get("function")
@@ -91,21 +94,22 @@ class GeminiThinkingBudgetCallback(CustomLogger):
     Callback that floors max_tokens for models whose hidden reasoning tokens
     can consume the entire token budget, producing empty completions.
     """
+
     def __init__(self) -> None:
         super().__init__()
         # Each rule: (model_substring, default_floor, env_override_key_or_None)
         self._rules: list[tuple[str, int, str | None]] = [
-            ("gemini",              1024, "OPEN_LLM_PROXY_GOOGLE_MIN_MAX_TOKENS"),
-            ("google/",             1024, "OPEN_LLM_PROXY_GOOGLE_MIN_MAX_TOKENS"),
-            ("deepseek-v4-flash-free",  4096, None),
-            ("nemotron-3-ultra-free",   4096, None),
+            ("gemini", 1024, "OPEN_LLM_PROXY_GOOGLE_MIN_MAX_TOKENS"),
+            ("google/", 1024, "OPEN_LLM_PROXY_GOOGLE_MIN_MAX_TOKENS"),
+            ("deepseek-v4-flash-free", 4096, None),
+            ("nemotron-3-ultra-free", 4096, None),
             ("nemotron-3-ultra-550b-a55b", 4096, None),
-            ("gpt-5-mini",              4096, None),
-            ("gpt-5.5",                 4096, None),
-            ("glm-5.2",                 4096, None),
-            ("kimi-k2.7-code",          4096, None),
-            ("qwen3.7-plus",            4096, None),
-            ("big-pickle",              4096, None),
+            ("gpt-5-mini", 4096, None),
+            ("gpt-5.5", 4096, None),
+            ("glm-5.2", 4096, None),
+            ("kimi-k2.7-code", 4096, None),
+            ("qwen3.7-plus", 4096, None),
+            ("big-pickle", 4096, None),
         ]
 
     async def async_pre_call_hook(
@@ -114,7 +118,7 @@ class GeminiThinkingBudgetCallback(CustomLogger):
         cache: Any,
         data: dict,
         call_type: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         model = data.get("model", "")
         model_lower = model.lower() if isinstance(model, str) else ""
         max_tokens = data.get("max_tokens")
@@ -139,7 +143,9 @@ class GeminiThinkingBudgetCallback(CustomLogger):
                     log.info(
                         "GeminiThinkingBudgetCallback: raising max_tokens %s -> %d "
                         "to preserve thinking budget for %s",
-                        max_tokens, floor, model,
+                        max_tokens,
+                        floor,
+                        model,
                     )
                     data["max_tokens"] = floor
                     return data
@@ -153,6 +159,7 @@ class TaskToolEnumInjectionCallback(CustomLogger):
     Callback that injects subagent_type enum list into task tool parameters
     to prevent model hallucination. Disabled by default.
     """
+
     def __init__(self, enabled: bool = False) -> None:
         super().__init__()
         self.enabled = enabled
@@ -163,7 +170,7 @@ class TaskToolEnumInjectionCallback(CustomLogger):
         cache: Any,
         data: dict,
         call_type: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         if not self.enabled:
             return None
 
@@ -185,6 +192,7 @@ class FallbackChainCommaRewriterCallback(CustomLogger):
     Hook to rewrite comma-separated fallback chain models to semicolon-separated
     internal aliases before LiteLLM's route_request splits them on commas.
     """
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -194,16 +202,16 @@ class FallbackChainCommaRewriterCallback(CustomLogger):
         cache: Any,
         data: dict,
         call_type: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         model = data.get("model")
         if isinstance(model, str):
             s = model
             if s.startswith("open-llm-proxy/"):
-                s = s[len("open-llm-proxy/"):]
-                
+                s = s[len("open-llm-proxy/") :]
+
             if s.startswith("[") and s.endswith("]"):
                 s = s.replace(",", ";")
-                
+
             if s != model:
                 log.info("Rewrote model name: %s -> %s", model, s)
                 data["model"] = s
@@ -256,7 +264,7 @@ class OllamaReasoningStripCallback(CustomLogger):
                 if getattr(msg, k, None):
                     try:
                         setattr(msg, k, None)
-                    except Exception:
+                    except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                         pass
 
     async def async_post_call_success_hook(
@@ -302,8 +310,8 @@ class ServedByCallback(CustomLogger):
         data: dict,
         user_api_key_dict: Any,
         response: Any,
-        request_headers: Optional[dict[str, str]] = None,
-        litellm_call_info: Optional[dict[str, Any]] = None,
+        request_headers: dict[str, str] | None = None,
+        litellm_call_info: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         key = served_by_from_data(data)
 
@@ -316,12 +324,13 @@ class ServedByCallback(CustomLogger):
                 if isinstance(model_id, str):
                     try:
                         from litellm.proxy.proxy_server import llm_router
+
                         deployment = llm_router.get_model_info(id=model_id)
                         if isinstance(deployment, dict):
                             model_info = deployment.get("model_info")
                             if isinstance(model_info, dict):
                                 key = model_info.get("rate_limit_key")
-                    except Exception:
+                    except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                         pass
 
         if not key and response is not None:
@@ -330,12 +339,13 @@ class ServedByCallback(CustomLogger):
             if isinstance(model_id, str):
                 try:
                     from litellm.proxy.proxy_server import llm_router
+
                     deployment = llm_router.get_model_info(id=model_id)
                     if isinstance(deployment, dict):
                         model_info = deployment.get("model_info")
                         if isinstance(model_info, dict):
                             key = model_info.get("rate_limit_key")
-                except Exception:
+                except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                     pass
 
         if isinstance(key, str) and key:
@@ -345,13 +355,13 @@ class ServedByCallback(CustomLogger):
                     # Header lookup reports latest winner but does not consume
                     # the inline change announcement.
                     global_attribution_store.set(attr_id, key)
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
             return {"x-open-llm-proxy-served-by": key}
         return {}
 
 
-def _deployment_rate_limit_key(deployment: dict) -> Optional[str]:
+def _deployment_rate_limit_key(deployment: dict) -> str | None:
     if not isinstance(deployment, dict):
         return None
     model_info = deployment.get("model_info")
@@ -375,16 +385,18 @@ class StickyRoutingCallback(CustomLogger):
 
     def __init__(self) -> None:
         super().__init__()
-        self._enabled = os.environ.get(
-            "OPEN_LLM_PROXY_STICKY_ROUTING", "0"
-        ).lower() not in ("0", "false", "no")
+        self._enabled = os.environ.get("OPEN_LLM_PROXY_STICKY_ROUTING", "0").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
 
     async def async_filter_deployments(
         self,
         model: str,
         healthy_deployments: list,
         messages: Any,
-        request_kwargs: Optional[dict] = None,
+        request_kwargs: dict | None = None,
         parent_otel_span: Any = None,
     ) -> list:
         if not self._enabled or not healthy_deployments or len(healthy_deployments) == 1:
@@ -401,7 +413,8 @@ class StickyRoutingCallback(CustomLogger):
             if _deployment_rate_limit_key(deployment) == preferred:
                 log.info(
                     "StickyRoutingCallback: pinning session %s to warm deployment %s",
-                    attr_id, preferred,
+                    attr_id,
+                    preferred,
                 )
                 return [deployment]
         return healthy_deployments

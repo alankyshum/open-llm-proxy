@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
+# macOS-only personal deployment helper for the repository layout. Generic install: pip install .
 set -euo pipefail
 # Deployment contract: bin/sync-agents deploys only configuration. Proxy code reaches
 # the running launchd service (com.user.open-llm-proxy, using ~/.local/share/open-llm-proxy)
 # only through this script followed by launchctl kickstart -k gui/$(id -u)/com.user.open-llm-proxy.
 
 SUBMODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DOTFILES_ROOT="$(cd "$SUBMODULE_DIR/../.." && pwd)"
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "Error: deploy.sh is a macOS-only personal deployment helper; use pip install ." >&2
+  exit 1
+fi
+DOTFILES_ROOT="${DOTFILES_ROOT:-$(cd "$SUBMODULE_DIR/../.." && pwd)}"
 RUNTIME_DIR="${OPEN_LLM_PROXY_RUNTIME_DIR:-$HOME/.local/share/open-llm-proxy}"
 CONFIG_DEST_DIR="${OPEN_LLM_PROXY_CONFIG_DIR:-$HOME/.config/open-llm-proxy}"
 AGENT_CONFIG_SRC="${OPEN_LLM_PROXY_AGENT_CONFIG:-$DOTFILES_ROOT/config/agent-runtime/agent-config.yml}"
@@ -13,6 +18,14 @@ BIN_DIR="$RUNTIME_DIR/bin"
 LOCAL_BIN_LINK="${HOME}/.local/bin/open-llm-proxy"
 
 echo "=== Deploying open-llm-proxy submodule -> runtime ==="
+
+if [ ! -f "$AGENT_CONFIG_SRC" ] || {
+  [ -z "${OPEN_LLM_PROXY_AGENT_CONFIG:-}" ] && [ ! -d "$DOTFILES_ROOT/config/agent-runtime" ];
+}; then
+  echo "Error: expected personal configuration layout is absent. Set DOTFILES_ROOT or " >&2
+  echo "OPEN_LLM_PROXY_AGENT_CONFIG to an existing agent-config.yml." >&2
+  exit 1
+fi
 
 # 1. Sync the package directory (open_llm_proxy/)
 echo "Syncing open_llm_proxy/ package..."

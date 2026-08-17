@@ -4,7 +4,6 @@ from pathlib import Path
 
 from open_llm_proxy import env_creds
 
-
 ENV_KEY = "NVIDIA_API_KEY"
 
 
@@ -20,7 +19,7 @@ def _resolve_account_key(account: str | None) -> str | None:
             secret = ref.read_bytes()
             if secret and secret.strip():
                 return secret.decode().strip()
-    except Exception:
+    except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
         pass
     return None
 
@@ -43,9 +42,7 @@ def get_api_key(account: str | None = None) -> str:
         if key:
             return key
         if account != "default":
-            raise RuntimeError(
-                f"NVIDIA account {account!r} has no stored credential"
-            )
+            raise RuntimeError(f"NVIDIA account {account!r} has no stored credential")
     key = env_creds.get_env_key(ENV_KEY)
     if key and key.strip():
         return key.strip()

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import io
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 
 # ---- Fixtures -----------------------------------------------------------------
 
@@ -37,6 +35,7 @@ def _install_questionary(monkeypatch, responses: list):
     class _Select:
         def __init__(self, **kw):
             pass
+
         @staticmethod
         def ask():
             return responses.pop(0) if responses else None
@@ -44,6 +43,7 @@ def _install_questionary(monkeypatch, responses: list):
     class _Text:
         def __init__(self, **kw):
             self._validate = kw.get("validate")
+
         @staticmethod
         def ask():
             return responses.pop(0) if responses else None
@@ -51,6 +51,7 @@ def _install_questionary(monkeypatch, responses: list):
     class _Password:
         def __init__(self, **kw):
             pass
+
         @staticmethod
         def ask():
             return responses.pop(0) if responses else None
@@ -58,6 +59,7 @@ def _install_questionary(monkeypatch, responses: list):
     class _Confirm:
         def __init__(self, **kw):
             pass
+
         @staticmethod
         def ask():
             return responses.pop(0) if responses else None
@@ -75,11 +77,11 @@ def _install_questionary(monkeypatch, responses: list):
 
 def _make_stub_migration_skipped(monkeypatch):
     """Prevent migration from finding any legacy credentials."""
-    import open_llm_proxy.openrouter_creds
-    import open_llm_proxy.opencode_creds
     import open_llm_proxy.copilot_creds
     import open_llm_proxy.creds
     import open_llm_proxy.nvidia_creds
+    import open_llm_proxy.opencode_creds
+    import open_llm_proxy.openrouter_creds
 
     def _raise(*args):
         raise RuntimeError("no cred")
@@ -94,8 +96,10 @@ def _make_stub_migration_skipped(monkeypatch):
 def _stub_connectivity_ok(monkeypatch):
     """Make all connectivity checks return Ready."""
     from open_llm_proxy import connectivity
+
     monkeypatch.setattr(
-        connectivity, "check_provider",
+        connectivity,
+        "check_provider",
         lambda p, account=None: (True, "Ready"),
     )
 
@@ -109,18 +113,19 @@ class TestTUIDispatch:
         monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         assert run_auth_tui() == 127
 
     def test_bare_auth_no_tui_flag_calls_orchestrator(self, cfg, monkeypatch, capsys):
         """``auth --no-tui`` does not invoke the TUI."""
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
-        from open_llm_proxy import cli
-        from open_llm_proxy import connectivity
+        from open_llm_proxy import cli, connectivity
 
         checked = []
         monkeypatch.setattr(
-            connectivity, "check_provider",
+            connectivity,
+            "check_provider",
             lambda p, account=None: (checked.append(p), (True, "Ready"))[1],
         )
         # Stub orchestrator's check functions so they all report found
@@ -140,12 +145,12 @@ class TestTUIDispatch:
         """``auth accounts`` still routes to the accounts handler, not TUI."""
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
-        from open_llm_proxy import cli
-        import open_llm_proxy.openrouter_creds
-        import open_llm_proxy.opencode_creds
         import open_llm_proxy.copilot_creds
         import open_llm_proxy.creds
         import open_llm_proxy.nvidia_creds
+        import open_llm_proxy.opencode_creds
+        import open_llm_proxy.openrouter_creds
+        from open_llm_proxy import cli
 
         def _raise(*args):
             raise RuntimeError("no cred")
@@ -168,14 +173,15 @@ class TestTUIAdd:
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
         responses = [
-            "add",           # Top-level action
-            "nvidia",        # Provider select
-            "nv-key-123",    # Password input
-            None,            # Next action -> Ctrl-C -> quit
+            "add",  # Top-level action
+            "nvidia",  # Provider select
+            "nv-key-123",  # Password input
+            None,  # Next action -> Ctrl-C -> quit
         ]
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         rc = run_auth_tui()
         assert rc == 0
 
@@ -185,23 +191,26 @@ class TestTUIAdd:
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
         from open_llm_proxy import account_registry
+
         # Pre-seed an existing account
         account_registry.add_account("nvidia", "default", storage="env-line", ref="NVIDIA_API_KEY")
 
         # Mock env_creds.set_env_key to prevent real file writes
         import open_llm_proxy.env_creds
+
         monkeypatch.setattr(open_llm_proxy.env_creds, "set_env_key", lambda name, value: None)
 
         responses = [
-            "add",            # Top-level action
-            "nvidia",         # Provider select
-            "work",           # Name (text prompt)
-            "nv-key-work",    # Password
-            None,             # Next action -> Ctrl-C -> quit
+            "add",  # Top-level action
+            "nvidia",  # Provider select
+            "work",  # Name (text prompt)
+            "nv-key-work",  # Password
+            None,  # Next action -> Ctrl-C -> quit
         ]
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         rc = run_auth_tui()
         assert rc == 0
 
@@ -219,19 +228,18 @@ class TestTUIAdd:
 
         login_called = []
         monkeypatch.setattr(_cli, "_run_opencode_login", lambda: (login_called.append(1), 0)[1])
-        monkeypatch.setattr(
-            _cli, "_check_opencode", lambda: (True, "credential discoverable")
-        )
+        monkeypatch.setattr(_cli, "_check_opencode", lambda: (True, "credential discoverable"))
 
         responses = [
             "add",
             "opencode",
-            True,     # Confirm: yes, run login helper
-            None,     # Next action -> Ctrl-C -> quit
+            True,  # Confirm: yes, run login helper
+            None,  # Next action -> Ctrl-C -> quit
         ]
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         rc = run_auth_tui()
         assert rc == 0
         assert login_called == [1]
@@ -249,6 +257,7 @@ class TestTUIList:
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         rc = run_auth_tui()
         assert rc == 0
         out = capsys.readouterr().out
@@ -267,6 +276,7 @@ class TestTUISwitch:
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         rc = run_auth_tui()
         assert rc == 1
         assert "No accounts to switch" in capsys.readouterr().err
@@ -278,20 +288,20 @@ class TestTUIRemove:
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
         from open_llm_proxy import account_registry
-        account_registry.add_account(
-            "nvidia", "default", storage="env-line", ref="NVIDIA_API_KEY"
-        )
+
+        account_registry.add_account("nvidia", "default", storage="env-line", ref="NVIDIA_API_KEY")
 
         responses = [
             "remove",
             "nvidia",
             "default",  # select the only account
-            True,       # confirm removal
-            None,       # Ctrl-C to quit
+            True,  # confirm removal
+            None,  # Ctrl-C to quit
         ]
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         rc = run_auth_tui()
         assert rc == 0
         assert account_registry.list_accounts("nvidia") == []
@@ -303,9 +313,8 @@ class TestTUIRename:
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
         from open_llm_proxy import account_registry
-        account_registry.add_account(
-            "nvidia", "default", storage="env-line", ref="NVIDIA_API_KEY"
-        )
+
+        account_registry.add_account("nvidia", "default", storage="env-line", ref="NVIDIA_API_KEY")
         # Only 1 account, rename should be blocked
         responses = [
             "rename",
@@ -314,6 +323,7 @@ class TestTUIRename:
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         rc = run_auth_tui()
         assert rc == 1
         err = capsys.readouterr().err
@@ -329,6 +339,7 @@ class TestTUIIntegration:
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         assert run_auth_tui() == 0
 
     def test_ctrl_c_at_menu_returns_zero(self, cfg, monkeypatch):
@@ -339,4 +350,5 @@ class TestTUIIntegration:
         _install_questionary(monkeypatch, responses)
 
         from open_llm_proxy.auth_tui import run_auth_tui
+
         assert run_auth_tui() == 0

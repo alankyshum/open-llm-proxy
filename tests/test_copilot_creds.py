@@ -1,17 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
-import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import time
-import asyncio
-
-import pytest
 import httpx
+import pytest
 
 from open_llm_proxy import copilot_creds
 
@@ -36,7 +34,8 @@ def test_valid_endpoint_url(endpoint, expected):
     ["not-a-url", "https://", "http://insecure.example", "https://user:pw@host"],
 )
 async def test_endpoint_discovery_invalid_endpoint_falls_back(
-    monkeypatch, endpoint,
+    monkeypatch,
+    endpoint,
 ):
     monkeypatch.setenv("COPILOT_OAUTH_TOKEN", "ghu_endpoint_test")
     response = MagicMock(spec=httpx.Response)
@@ -66,8 +65,8 @@ def isolated_auth_path(monkeypatch, tmp_path):
 
 
 def test_get_oauth_token_from_env(monkeypatch):
-    monkeypatch.setenv("COPILOT_OAUTH_TOKEN", "ghu_env123")
-    assert copilot_creds.get_oauth_token() == "ghu_env123"
+    monkeypatch.setenv("COPILOT_OAUTH_TOKEN", "DUMMY-NOT-A-SECRET-env-token")
+    assert copilot_creds.get_oauth_token() == "DUMMY-NOT-A-SECRET-env-token"
 
 
 def test_get_oauth_token_from_opencode_auth(monkeypatch, tmp_path):
@@ -78,11 +77,12 @@ def test_get_oauth_token_from_opencode_auth(monkeypatch, tmp_path):
 
     auth_json = fake_home / ".local" / "share" / "opencode" / "auth.json"
     auth_json.parent.mkdir(parents=True)
-    auth_json.write_text(json.dumps({
-        "github-copilot": {"refresh": "ghu_opencode123"}
-    }), encoding="utf-8")
+    auth_json.write_text(
+        json.dumps({"github-copilot": {"refresh": "DUMMY-NOT-A-SECRET-refresh-token"}}),
+        encoding="utf-8",
+    )
 
-    assert copilot_creds.get_oauth_token() == "ghu_opencode123"
+    assert copilot_creds.get_oauth_token() == "DUMMY-NOT-A-SECRET-refresh-token"
 
 
 def test_opencode_token_is_mirrored_to_fallback_file(monkeypatch, tmp_path):
@@ -94,9 +94,9 @@ def test_opencode_token_is_mirrored_to_fallback_file(monkeypatch, tmp_path):
 
     auth_json = fake_home / ".local" / "share" / "opencode" / "auth.json"
     auth_json.parent.mkdir(parents=True)
-    auth_json.write_text(json.dumps({
-        "github-copilot": {"refresh": "ghu_mirrored123"}
-    }), encoding="utf-8")
+    auth_json.write_text(
+        json.dumps({"github-copilot": {"refresh": "ghu_mirrored123"}}), encoding="utf-8"
+    )
 
     assert copilot_creds.get_oauth_token() == "ghu_mirrored123"
 
@@ -124,9 +124,9 @@ def test_opencode_token_mirror_does_not_shadow_rotated_token(monkeypatch, tmp_pa
 
     auth_json = fake_home / ".local" / "share" / "opencode" / "auth.json"
     auth_json.parent.mkdir(parents=True)
-    auth_json.write_text(json.dumps({
-        "github-copilot": {"refresh": "ghu_rotated"}
-    }), encoding="utf-8")
+    auth_json.write_text(
+        json.dumps({"github-copilot": {"refresh": "ghu_rotated"}}), encoding="utf-8"
+    )
 
     assert copilot_creds.get_oauth_token() == "ghu_rotated"
     assert json.loads(fallback_file.read_text())["oauth_token"] == "ghu_rotated"
@@ -171,12 +171,14 @@ def test_get_oauth_token_secret_tool_linux(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", mock_run)
     # Mock shutil.which to return path to secret-tool
-    monkeypatch.setattr(shutil, "which", lambda cmd: "/usr/bin/secret-tool" if cmd == "secret-tool" else None)
+    monkeypatch.setattr(
+        shutil, "which", lambda cmd: "/usr/bin/secret-tool" if cmd == "secret-tool" else None
+    )
 
     assert copilot_creds.get_oauth_token() == "ghu_secrettool123"
 
 
-import shutil
+import shutil  # staged imports preserve startup diagnostics  # noqa: E402
 
 
 @pytest.mark.anyio
@@ -188,7 +190,7 @@ async def test_get_copilot_token_token_exchange(monkeypatch, isolated_auth_path)
     mock_response.json.return_value = {
         "token": "session_tok_123",
         "expires_at": 1900000000,
-        "endpoints": {"api": "https://api.custom-copilot.com"}
+        "endpoints": {"api": "https://api.custom-copilot.com"},
     }
 
     # Patch httpx.AsyncClient.get
@@ -215,16 +217,16 @@ async def test_get_copilot_token_single_flight(monkeypatch):
         calls += 1
         await asyncio.sleep(0)
         return copilot_creds._ShortLived(
-            token=oauth, expires_at=int(time.time()) + 3600,
+            token=oauth,
+            expires_at=int(time.time()) + 3600,
             endpoints_api="https://api.enterprise.githubcopilot.com",
         )
 
     monkeypatch.setattr(copilot_creds, "_fetch_short_lived", fetch)
-    results = await asyncio.gather(*(
-        copilot_creds.get_copilot_token() for _ in range(10)
-    ))
+    results = await asyncio.gather(*(copilot_creds.get_copilot_token() for _ in range(10)))
     assert calls == 1
     assert all(result == results[0] for result in results)
+
 
 @pytest.mark.anyio
 async def test_get_copilot_token_unexpired_access(monkeypatch, isolated_auth_path):
@@ -247,15 +249,15 @@ async def test_get_copilot_token_expired_access_goes_to_exchange(monkeypatch, is
         "access": "session_tok_expired",
         "expires": int(time.time() - 1000),
     }
-    
+
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "endpoints": {"api": "https://api.githubcopilot.com"}
-    }
+    mock_response.json.return_value = {"endpoints": {"api": "https://api.githubcopilot.com"}}
 
-    with patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data), \
-         patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
+    with (
+        patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data),
+        patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get,
+    ):
         token, api_url = await copilot_creds.get_copilot_token()
         assert token == "gho_refresh_oauth"
         mock_get.assert_called_once()
@@ -279,8 +281,10 @@ async def test_get_copilot_token_404_falls_back_to_direct(monkeypatch, isolated_
     mock_response.status_code = 404
     mock_response.text = '{"message":"Not Found"}'
 
-    with patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data), \
-         patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
+    with (
+        patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data),
+        patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get,
+    ):
         token, api_url = await copilot_creds.get_copilot_token()
         assert token == "gho_no_copilot_scope"  # falls back to raw token
         assert api_url == "https://api.githubcopilot.com"
@@ -303,12 +307,12 @@ async def test_get_copilot_token_writes_back_to_auth_json(monkeypatch, isolated_
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
-    future_ts = int(time.time()) + 3600
+    int(time.time()) + 3600
     mock_response.json.return_value = {
         "endpoints": {"api": "https://api.githubcopilot.com"},
     }
 
-    with patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
+    with patch("httpx.AsyncClient.get", return_value=mock_response):
         token, _ = await copilot_creds.get_copilot_token()
         assert token == "gho_valid_refresh"
 
@@ -334,8 +338,10 @@ async def test_get_copilot_token_degenerate_state(monkeypatch, isolated_auth_pat
     mock_response.status_code = 404
     mock_response.text = '{"message":"Not Found"}'
 
-    with patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data), \
-         patch("httpx.AsyncClient.get", return_value=mock_response):
+    with (
+        patch("open_llm_proxy.copilot_creds._read_opencode_auth_data", return_value=fake_data),
+        patch("httpx.AsyncClient.get", return_value=mock_response),
+    ):
         token, api_url = await copilot_creds.get_copilot_token()
         assert token == "gho_degenerate"
         assert api_url == "https://api.githubcopilot.com"

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from unittest.mock import MagicMock
 
 from open_llm_proxy import connectivity
 
+
 def test_check_provider_openrouter(monkeypatch):
-    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key")
+    monkeypatch.setattr(
+        "open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key"
+    )
 
     def mock_send(request: httpx.Request):
         assert request.url.host == "openrouter.ai"
@@ -21,8 +23,11 @@ def test_check_provider_openrouter(monkeypatch):
     assert ok is True
     assert status == "Ready"
 
+
 def test_check_provider_opencode(monkeypatch):
-    monkeypatch.setattr("open_llm_proxy.opencode_creds.get_opencode_api_key", lambda: "fake-code-key")
+    monkeypatch.setattr(
+        "open_llm_proxy.opencode_creds.get_opencode_api_key", lambda: "fake-code-key"
+    )
 
     def mock_send(request: httpx.Request):
         assert request.url.host == "opencode.ai"
@@ -35,6 +40,7 @@ def test_check_provider_opencode(monkeypatch):
     ok, status = connectivity.check_provider("opencode")
     assert ok is True
     assert status == "Ready"
+
 
 def test_check_provider_claude_cli(monkeypatch):
     monkeypatch.setattr("open_llm_proxy.creds.get_api_key", lambda account=None: "fake-claude-key")
@@ -50,6 +56,7 @@ def test_check_provider_claude_cli(monkeypatch):
     ok, status = connectivity.check_provider("claude-cli")
     assert ok is True
     assert status == "Ready"
+
 
 def test_check_provider_copilot(monkeypatch):
     async def mock_get_token():
@@ -69,6 +76,7 @@ def test_check_provider_copilot(monkeypatch):
     assert ok is True
     assert status == "Ready"
 
+
 @pytest.mark.parametrize(
     "status_code, expected_ok, expected_status",
     [
@@ -78,13 +86,17 @@ def test_check_provider_copilot(monkeypatch):
         (400, False, "Client Error"),
         (500, False, "Server Error"),
         (503, False, "Server Error"),
-    ]
+    ],
 )
 def test_check_provider_error_statuses(monkeypatch, status_code, expected_ok, expected_status):
-    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key")
+    monkeypatch.setattr(
+        "open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key"
+    )
 
     def mock_send(request: httpx.Request):
-        return httpx.Response(status_code, text="sensitive error details or secrets in response body")
+        return httpx.Response(
+            status_code, text="sensitive error details or secrets in response body"
+        )
 
     transport = httpx.MockTransport(mock_send)
     monkeypatch.setattr("httpx.Client._transport_for_url", lambda self, url: transport)
@@ -93,8 +105,11 @@ def test_check_provider_error_statuses(monkeypatch, status_code, expected_ok, ex
     assert ok is expected_ok
     assert status == expected_status
 
+
 def test_check_provider_timeout(monkeypatch):
-    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key")
+    monkeypatch.setattr(
+        "open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key"
+    )
 
     def mock_send(request: httpx.Request):
         raise httpx.TimeoutException("mock timeout")
@@ -106,8 +121,11 @@ def test_check_provider_timeout(monkeypatch):
     assert ok is False
     assert status == "Timeout"
 
+
 def test_check_provider_connection_failed(monkeypatch):
-    monkeypatch.setattr("open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key")
+    monkeypatch.setattr(
+        "open_llm_proxy.openrouter_creds.get_persisted_api_key", lambda account=None: "fake-key"
+    )
 
     def mock_send(request: httpx.Request):
         raise httpx.ConnectError("mock connection failed")
@@ -133,8 +151,6 @@ def test_check_provider_claude_cli_named(monkeypatch):
         return "sk-ant-named-key"
 
     monkeypatch.setattr("open_llm_proxy.creds.get_api_key", fake_get_key)
-
-    from open_llm_proxy import anthropic_client
 
     monkeypatch.setattr("open_llm_proxy.anthropic_client._headers", lambda key: {"x-api-key": key})
 

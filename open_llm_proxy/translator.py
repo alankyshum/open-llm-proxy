@@ -63,11 +63,11 @@ _MODEL_CATALOG: list[dict] = [
 ]
 
 _THINKING_VARIANTS: list[tuple[str, str]] = [
-    ("none",   "no thinking"),
-    ("low",    "light thinking"),
+    ("none", "no thinking"),
+    ("low", "light thinking"),
     ("medium", "moderate thinking"),
-    ("high",   "deep thinking"),
-    ("xhigh",  "max thinking"),
+    ("high", "deep thinking"),
+    ("xhigh", "max thinking"),
 ]
 
 _MODEL_NORMALIZE: list[tuple[str, str]] = [
@@ -100,12 +100,12 @@ def _discover_models_from_claude_json() -> list[dict]:
 
     seen: set[str] = set()
     for proj in (data.get("projects") or {}).values():
-        for model_id in (proj.get("lastModelUsage") or {}):
+        for model_id in proj.get("lastModelUsage") or {}:
             canonical = _normalize_model_id(model_id)
             if canonical:
                 seen.add(canonical)
 
-    for entry in (data.get("additionalModelOptionsCache") or []):
+    for entry in data.get("additionalModelOptionsCache") or []:
         if isinstance(entry, dict) and entry.get("id"):
             canonical = _normalize_model_id(entry["id"])
             if canonical:
@@ -114,14 +114,16 @@ def _discover_models_from_claude_json() -> list[dict]:
     known_ids = {m["id"] for m in _MODEL_CATALOG}
     extras = []
     for model_id in sorted(seen - known_ids):
-        extras.append({
-            "id": model_id,
-            "context_window": 200_000,
-            "max_output_tokens": 32_000,
-            "description": "Discovered from claude CLI usage history",
-            "default_thinking": "none",
-            "owned_by": "anthropic",
-        })
+        extras.append(
+            {
+                "id": model_id,
+                "context_window": 200_000,
+                "max_output_tokens": 32_000,
+                "description": "Discovered from claude CLI usage history",
+                "default_thinking": "none",
+                "owned_by": "anthropic",
+            }
+        )
     return extras
 
 
@@ -141,24 +143,28 @@ def build_models_list() -> list[dict]:
             (label for name, label in _THINKING_VARIANTS if name == default_thinking),
             default_thinking,
         )
-        entries.append({
-            "id": mid,
-            "object": "model",
-            "owned_by": owned_by,
-            "context_window": ctx,
-            "max_output_tokens": max_out,
-            "description": f"{base_desc} [default: {default_label}]",
-        })
-
-        for variant_name, variant_label in _THINKING_VARIANTS:
-            entries.append({
-                "id": f"{mid}:{variant_name}",
+        entries.append(
+            {
+                "id": mid,
                 "object": "model",
                 "owned_by": owned_by,
                 "context_window": ctx,
                 "max_output_tokens": max_out,
-                "description": f"{base_desc} [{variant_label}]",
-            })
+                "description": f"{base_desc} [default: {default_label}]",
+            }
+        )
+
+        for variant_name, variant_label in _THINKING_VARIANTS:
+            entries.append(
+                {
+                    "id": f"{mid}:{variant_name}",
+                    "object": "model",
+                    "owned_by": owned_by,
+                    "context_window": ctx,
+                    "max_output_tokens": max_out,
+                    "description": f"{base_desc} [{variant_label}]",
+                }
+            )
 
     return entries
 
@@ -205,24 +211,28 @@ def translate_anthropic_models(anthropic_models: list[dict[str, Any]]) -> list[d
             default_thinking,
         )
 
-        entries.append({
-            "id": mid,
-            "object": "model",
-            "owned_by": "anthropic",
-            "context_window": ctx,
-            "max_output_tokens": max_out,
-            "description": f"{display_name} [default: {default_label}]",
-        })
-
-        for variant_name, variant_label in _THINKING_VARIANTS:
-            entries.append({
-                "id": f"{mid}:{variant_name}",
+        entries.append(
+            {
+                "id": mid,
                 "object": "model",
                 "owned_by": "anthropic",
                 "context_window": ctx,
                 "max_output_tokens": max_out,
-                "description": f"{display_name} [{variant_label}]",
-            })
+                "description": f"{display_name} [default: {default_label}]",
+            }
+        )
+
+        for variant_name, variant_label in _THINKING_VARIANTS:
+            entries.append(
+                {
+                    "id": f"{mid}:{variant_name}",
+                    "object": "model",
+                    "owned_by": "anthropic",
+                    "context_window": ctx,
+                    "max_output_tokens": max_out,
+                    "description": f"{display_name} [{variant_label}]",
+                }
+            )
 
     return entries
 
@@ -398,7 +408,7 @@ def _parse_data_uri(url: str) -> tuple[str, str] | None:
         header, b64 = url.split(",", 1)
     except ValueError:
         return None
-    meta = header[len("data:"):]
+    meta = header[len("data:") :]
     if ";base64" not in meta:
         return None
     media_type = meta.split(";")[0] or "image/png"
@@ -426,10 +436,12 @@ def _user_content_blocks(content: Any) -> list[dict[str, Any]]:
                 parsed = _parse_data_uri(url)
                 if parsed:
                     media_type, b64 = parsed
-                    blocks.append({
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": media_type, "data": b64},
-                    })
+                    blocks.append(
+                        {
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": media_type, "data": b64},
+                        }
+                    )
                 else:
                     blocks.append({"type": "text", "text": f"[image: {url[:60]}...]"})
             elif t in ("tool_result", "tool-result"):
@@ -444,11 +456,13 @@ def _user_content_blocks(content: Any) -> list[dict[str, Any]]:
                         "inline tool_result block missing tool_use_id/toolCallId"
                     )
                 text = _content_to_text([part])
-                blocks.append({
-                    "type": "tool_result",
-                    "tool_use_id": tu_id,
-                    "content": text,
-                })
+                blocks.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tu_id,
+                        "content": text,
+                    }
+                )
             else:
                 blocks.append({"type": "text", "text": _content_to_text([part])})
         return blocks
@@ -478,7 +492,7 @@ def openai_messages_to_anthropic(
             text = _content_to_text(m.get("content"))
             if text:
                 blocks.append({"type": "text", "text": text})
-            for tc in (m.get("tool_calls") or []):
+            for tc in m.get("tool_calls") or []:
                 fn = tc.get("function") or {}
                 args_raw = fn.get("arguments")
                 if isinstance(args_raw, str):
@@ -490,12 +504,14 @@ def openai_messages_to_anthropic(
                     args_in = args_raw
                 else:
                     args_in = {}
-                blocks.append({
-                    "type": "tool_use",
-                    "id": tc.get("id") or "",
-                    "name": fn.get("name") or "",
-                    "input": args_in,
-                })
+                blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": tc.get("id") or "",
+                        "name": fn.get("name") or "",
+                        "input": args_in,
+                    }
+                )
             if not blocks:
                 continue
             out.append({"role": "assistant", "content": blocks})
@@ -511,18 +527,20 @@ def openai_messages_to_anthropic(
                         tcid = cand
                         break
             if not tcid:
-                raise TranslationError(
-                    "tool message missing tool_call_id/toolCallId"
-                )
+                raise TranslationError("tool message missing tool_call_id/toolCallId")
             text = _content_to_text(content)
-            out.append({
-                "role": "user",
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": tcid,
-                    "content": text,
-                }],
-            })
+            out.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tcid,
+                            "content": text,
+                        }
+                    ],
+                }
+            )
 
     merged: list[dict[str, Any]] = []
     for msg in out:
@@ -535,8 +553,7 @@ def openai_messages_to_anthropic(
 
 
 _DEFAULT_BILLING_HEADER = (
-    "x-anthropic-billing-header: cc_version=2.1.126.824; "
-    "cc_entrypoint=sdk-cli; cch=6b7d9;"
+    "x-anthropic-billing-header: cc_version=2.1.126.824; cc_entrypoint=sdk-cli; cch=6b7d9;"
 )
 
 
@@ -597,7 +614,9 @@ def _base_chunk(completion_id: str, model: str) -> dict[str, Any]:
     }
 
 
-def text_delta_chunk(completion_id: str, model: str, text: str, *, first: bool = False) -> dict[str, Any]:
+def text_delta_chunk(
+    completion_id: str, model: str, text: str, *, first: bool = False
+) -> dict[str, Any]:  # intentional long protocol text or compatibility message
     delta: dict[str, Any] = {"content": text}
     if first:
         delta["role"] = "assistant"
@@ -751,12 +770,15 @@ def anthropic_event_to_openai_chunks(
             state["block_to_tool_use_id"][idx] = block.get("id", "")
             state["block_to_tool_name"][idx] = block.get("name", "")
             state["block_arg_buf"][idx] = ""
-            out.append(tool_call_start_chunk(
-                completion_id, model,
-                index=tool_idx,
-                tool_call_id=block.get("id", ""),
-                name=block.get("name", ""),
-            ))
+            out.append(
+                tool_call_start_chunk(
+                    completion_id,
+                    model,
+                    index=tool_idx,
+                    tool_call_id=block.get("id", ""),
+                    name=block.get("name", ""),
+                )
+            )
         return out
 
     if event_name == "content_block_delta":
@@ -784,9 +806,14 @@ def anthropic_event_to_openai_chunks(
                 args_in = {}
             transformed = apply_rtk_to_args(args_in) if isinstance(args_in, dict) else args_in
             args_str = json.dumps(transformed, separators=(",", ":"))
-            out.append(tool_call_args_delta_chunk(
-                completion_id, model, index=tool_idx, partial_args=args_str,
-            ))
+            out.append(
+                tool_call_args_delta_chunk(
+                    completion_id,
+                    model,
+                    index=tool_idx,
+                    partial_args=args_str,
+                )
+            )
         return out
 
     if event_name == "message_delta":

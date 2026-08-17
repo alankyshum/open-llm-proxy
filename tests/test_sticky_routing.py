@@ -1,7 +1,6 @@
-import os
-import uuid
 import asyncio
-import pytest
+import uuid
+
 from open_llm_proxy.attribution import global_attribution_store
 from open_llm_proxy.callbacks import StickyRoutingCallback
 
@@ -19,20 +18,18 @@ def test_pin_when_present(monkeypatch):
     ]
 
     request_kwargs = {
-        "proxy_server_request": {
-            "headers": {
-                "x-open-llm-proxy-attribution-id": attr_id
-            }
-        }
+        "proxy_server_request": {"headers": {"x-open-llm-proxy-attribution-id": attr_id}}
     }
 
     callback = StickyRoutingCallback()
-    res = asyncio.run(callback.async_filter_deployments(
-        model="some-model",
-        healthy_deployments=healthy_deployments,
-        messages=[],
-        request_kwargs=request_kwargs
-    ))
+    res = asyncio.run(
+        callback.async_filter_deployments(
+            model="some-model",
+            healthy_deployments=healthy_deployments,
+            messages=[],
+            request_kwargs=request_kwargs,
+        )
+    )
 
     assert len(res) == 1
     assert res[0]["model_info"]["rate_limit_key"] == winner
@@ -55,20 +52,18 @@ def test_passthrough_when_winner_absent():
     ]
 
     request_kwargs = {
-        "proxy_server_request": {
-            "headers": {
-                "x-open-llm-proxy-attribution-id": attr_id
-            }
-        }
+        "proxy_server_request": {"headers": {"x-open-llm-proxy-attribution-id": attr_id}}
     }
 
     callback = StickyRoutingCallback()
-    res = asyncio.run(callback.async_filter_deployments(
-        model="some-model",
-        healthy_deployments=healthy_deployments,
-        messages=[],
-        request_kwargs=request_kwargs
-    ))
+    res = asyncio.run(
+        callback.async_filter_deployments(
+            model="some-model",
+            healthy_deployments=healthy_deployments,
+            messages=[],
+            request_kwargs=request_kwargs,
+        )
+    )
 
     assert res == healthy_deployments
 
@@ -79,24 +74,25 @@ def test_first_turn_passthrough():
 
     healthy_deployments = [
         {"model_name": "other-1", "model_info": {"rate_limit_key": "openai/gpt-4"}},
-        {"model_name": "gemini", "model_info": {"rate_limit_key": "github-copilot/gemini-3.5-flash"}},
+        {
+            "model_name": "gemini",
+            "model_info": {"rate_limit_key": "github-copilot/gemini-3.5-flash"},
+        },
     ]
 
     request_kwargs = {
-        "proxy_server_request": {
-            "headers": {
-                "x-open-llm-proxy-attribution-id": attr_id
-            }
-        }
+        "proxy_server_request": {"headers": {"x-open-llm-proxy-attribution-id": attr_id}}
     }
 
     callback = StickyRoutingCallback()
-    res = asyncio.run(callback.async_filter_deployments(
-        model="some-model",
-        healthy_deployments=healthy_deployments,
-        messages=[],
-        request_kwargs=request_kwargs
-    ))
+    res = asyncio.run(
+        callback.async_filter_deployments(
+            model="some-model",
+            healthy_deployments=healthy_deployments,
+            messages=[],
+            request_kwargs=request_kwargs,
+        )
+    )
 
     assert res == healthy_deployments
 
@@ -113,20 +109,18 @@ def test_disabled_via_env(monkeypatch):
     ]
 
     request_kwargs = {
-        "proxy_server_request": {
-            "headers": {
-                "x-open-llm-proxy-attribution-id": attr_id
-            }
-        }
+        "proxy_server_request": {"headers": {"x-open-llm-proxy-attribution-id": attr_id}}
     }
 
     callback = StickyRoutingCallback()
-    res = asyncio.run(callback.async_filter_deployments(
-        model="some-model",
-        healthy_deployments=healthy_deployments,
-        messages=[],
-        request_kwargs=request_kwargs
-    ))
+    res = asyncio.run(
+        callback.async_filter_deployments(
+            model="some-model",
+            healthy_deployments=healthy_deployments,
+            messages=[],
+            request_kwargs=request_kwargs,
+        )
+    )
 
     assert res == healthy_deployments
 
@@ -137,30 +131,27 @@ def test_single_or_empty_deployment():
     global_attribution_store.set(attr_id, winner)
 
     request_kwargs = {
-        "proxy_server_request": {
-            "headers": {
-                "x-open-llm-proxy-attribution-id": attr_id
-            }
-        }
+        "proxy_server_request": {"headers": {"x-open-llm-proxy-attribution-id": attr_id}}
     }
 
     callback = StickyRoutingCallback()
 
     # Empty list
-    res_empty = asyncio.run(callback.async_filter_deployments(
-        model="some-model",
-        healthy_deployments=[],
-        messages=[],
-        request_kwargs=request_kwargs
-    ))
+    res_empty = asyncio.run(
+        callback.async_filter_deployments(
+            model="some-model", healthy_deployments=[], messages=[], request_kwargs=request_kwargs
+        )
+    )
     assert res_empty == []
 
     # Single deployment
     single = [{"model_name": "gemini", "model_info": {"rate_limit_key": winner}}]
-    res_single = asyncio.run(callback.async_filter_deployments(
-        model="some-model",
-        healthy_deployments=single,
-        messages=[],
-        request_kwargs=request_kwargs
-    ))
+    res_single = asyncio.run(
+        callback.async_filter_deployments(
+            model="some-model",
+            healthy_deployments=single,
+            messages=[],
+            request_kwargs=request_kwargs,
+        )
+    )
     assert res_single == single

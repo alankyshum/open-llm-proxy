@@ -14,6 +14,7 @@ def cfg_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     d = tmp_path / "olp_config"
     d.mkdir()
     monkeypatch.setenv("OLP_CONFIG_DIR", str(d))
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     return d
 
 
@@ -115,8 +116,10 @@ class TestEnvLineAccountAware:
         from open_llm_proxy import account_registry
 
         account_registry.add_account(
-            "openrouter", "work",
-            storage="api-key", secret_bytes=b"sk-or-named-work",
+            "openrouter",
+            "work",
+            storage="api-key",
+            secret_bytes=b"sk-or-named-work",
         )
         from open_llm_proxy import openrouter_creds
 
@@ -124,7 +127,7 @@ class TestEnvLineAccountAware:
 
     def test_openrouter_default_still_reads_env_file(self, cfg_dir, monkeypatch):
         """Bare get_persisted_api_key() (no account) still reads from env file."""
-        from open_llm_proxy import openrouter_creds, env_creds
+        from open_llm_proxy import env_creds, openrouter_creds
 
         env_creds.set_env_key("OPENROUTER_API_KEY", "sk-or-env-file")
         assert openrouter_creds.get_persisted_api_key() == "sk-or-env-file"
@@ -134,8 +137,10 @@ class TestEnvLineAccountAware:
         from open_llm_proxy import account_registry
 
         account_registry.add_account(
-            "nvidia", "work",
-            storage="api-key", secret_bytes=b"nv-named-work",
+            "nvidia",
+            "work",
+            storage="api-key",
+            secret_bytes=b"nv-named-work",
         )
         from open_llm_proxy import nvidia_creds
 
@@ -143,7 +148,7 @@ class TestEnvLineAccountAware:
 
     def test_nvidia_default_reads_env(self, cfg_dir, monkeypatch):
         """nvidia_creds.get_api_key() with no account reads from env / env file."""
-        from open_llm_proxy import nvidia_creds, env_creds
+        from open_llm_proxy import env_creds, nvidia_creds
 
         env_creds.set_env_key("NVIDIA_API_KEY", "nv-env-file")
         assert nvidia_creds.get_api_key() == "nv-env-file"
@@ -154,6 +159,7 @@ class TestEnvLineAccountAware:
         """get_persisted_api_key(account='ghost') with no stored secret raises
         RuntimeError — does NOT fall back to env file."""
         from open_llm_proxy import openrouter_creds
+
         with pytest.raises(RuntimeError, match="has no stored credential"):
             openrouter_creds.get_persisted_api_key(account="ghost")
 
@@ -162,6 +168,7 @@ class TestEnvLineAccountAware:
         — does NOT fall back to env var."""
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-env")
         from open_llm_proxy import openrouter_creds
+
         with pytest.raises(RuntimeError, match="has no stored credential"):
             openrouter_creds.get_api_key(account="ghost")
 
@@ -170,13 +177,15 @@ class TestEnvLineAccountAware:
         RuntimeError — does NOT fall back to env var."""
         monkeypatch.setenv("NVIDIA_API_KEY", "nv-env")
         from open_llm_proxy import nvidia_creds
+
         with pytest.raises(RuntimeError, match="has no stored credential"):
             nvidia_creds.get_api_key(account="ghost")
 
     def test_openrouter_persisted_named_default_legacy_fallback(self, cfg_dir):
         """get_persisted_api_key(account='default') without a file-backed
         'default' account still reads from the shared env file (legacy)."""
-        from open_llm_proxy import openrouter_creds, env_creds
+        from open_llm_proxy import env_creds, openrouter_creds
+
         env_creds.set_env_key("OPENROUTER_API_KEY", "sk-or-legacy-default")
         assert openrouter_creds.get_persisted_api_key(account="default") == "sk-or-legacy-default"
 
@@ -185,6 +194,7 @@ class TestEnvLineAccountAware:
         back to env var (legacy behavior preserved)."""
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-env-default")
         from open_llm_proxy import openrouter_creds
+
         assert openrouter_creds.get_api_key(account="default") == "sk-or-env-default"
 
     def test_nvidia_named_default_legacy_fallback(self, cfg_dir, monkeypatch):
@@ -192,4 +202,5 @@ class TestEnvLineAccountAware:
         secret falls back to env var (legacy behavior preserved)."""
         monkeypatch.setenv("NVIDIA_API_KEY", "nv-env-default")
         from open_llm_proxy import nvidia_creds
+
         assert nvidia_creds.get_api_key(account="default") == "nv-env-default"

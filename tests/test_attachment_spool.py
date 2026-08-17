@@ -79,9 +79,7 @@ def test_unknown_mime_without_filename_falls_back_to_bin():
 @pytest.mark.parametrize(
     "hostile", ["../../etc/passwd", "/etc/passwd", "..", "C:\\windows\\evil.dll"]
 )
-def test_path_traversal_filenames_stay_inside_the_spool_dir(
-    hostile, isolated_spool_dir
-):
+def test_path_traversal_filenames_stay_inside_the_spool_dir(hostile, isolated_spool_dir):
     path = spool_attachment(b"payload", hostile, "application/pdf")
 
     assert path is not None
@@ -108,9 +106,7 @@ def test_write_failure_returns_none(monkeypatch):
     assert spool_attachment(b"data", "a.pdf", "application/pdf") is None
 
 
-def test_retention_pruning_removes_old_files_and_keeps_fresh_ones(
-    isolated_spool_dir, monkeypatch
-):
+def test_retention_pruning_removes_old_files_and_keeps_fresh_ones(isolated_spool_dir, monkeypatch):
     monkeypatch.setenv("OPEN_LLM_PROXY_ATTACHMENT_RETENTION_DAYS", "7")
     fresh = spool_attachment(b"fresh bytes", "fresh.pdf", "application/pdf")
     stale = isolated_spool_dir / "deadbeef-stale.pdf"

@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import yaml
 
+from open_llm_proxy.config_paths import find_agent_config, resolve_config_dir
 
-DEFAULT_CONFIG = Path.home() / ".config/open-llm-proxy/agent-config.yml"
+DEFAULT_CONFIG = None
 
 KNOWN_PROVIDERS = ("openrouter", "opencode", "github-copilot", "claude-cli", "nvidia")
 
@@ -32,9 +34,7 @@ def _help(args: argparse.Namespace) -> int:
         return 0
 
     subparsers = next(
-        action
-        for action in parser._actions
-        if isinstance(action, argparse._SubParsersAction)
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     )
     command_parser = subparsers.choices.get(args.topic)
     if command_parser is None:
@@ -51,6 +51,18 @@ def _help(args: argparse.Namespace) -> int:
 def _serve(args: argparse.Namespace) -> int:
     from open_llm_proxy.server_launcher import launch_server
 
+    for flag, value, env_name in (
+        ("--database-url", args.database_url, "DATABASE_URL"),
+        ("--master-key", args.master_key, "LITELLM_MASTER_KEY"),
+        ("--ui-password", args.ui_password, "UI_PASSWORD"),
+    ):
+        if value is not None:
+            print(
+                f"Deprecation warning: {flag} exposes a secret in argv, which is "
+                f"visible to other processes; use {env_name} instead.",
+                file=sys.stderr,
+            )
+
     launch_server(
         host=args.host,
         port=args.port,
@@ -65,23 +77,27 @@ def _serve(args: argparse.Namespace) -> int:
 
 
 def _ui(args: argparse.Namespace) -> int:
-    import urllib.request
     import urllib.error
+    import urllib.request
     import webbrowser
 
     url = args.url
     print(f"Checking LiteLLM Admin UI endpoint: {url}...")
     try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "open-llm-proxy-cli/1.0"}
+        req = urllib.request.Request(  # CLI permits user URL  # noqa: S310
+            url, headers={"User-Agent": "open-llm-proxy-cli/1.0"}
         )
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(  # noqa: S310
+            req, timeout=5
+        ) as response:  # user-supplied URL is intentionally opened by this CLI
             status = response.getcode()
             if status == 200:
                 html = response.read().decode("utf-8", errors="ignore")
                 if "Admin UI is disabled" in html:
-                    print("Error: The server responded, but the Admin UI is disabled (middleware block).", file=sys.stderr)
+                    print(
+                        "Error: The server responded, but the Admin UI is disabled (middleware block).",  # intentional long protocol text or compatibility message  # noqa: E501
+                        file=sys.stderr,
+                    )  # intentional long protocol text or compatibility message
                     return 1
                 print("Success! LiteLLM Admin UI is running and responding with 200 OK.")
                 if args.open:
@@ -93,7 +109,10 @@ def _ui(args: argparse.Namespace) -> int:
                 return 1
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            print(f"Error: Admin UI not found (404) at {url}. Is the UI disabled or port incorrect?", file=sys.stderr)
+            print(
+                f"Error: Admin UI not found (404) at {url}. Is the UI disabled or port incorrect?",
+                file=sys.stderr,
+            )  # intentional long protocol text or compatibility message
         else:
             print(f"Error: HTTP request failed with code {e.code}: {e.reason}", file=sys.stderr)
         return 1
@@ -111,8 +130,11 @@ SERVICE_LABEL = "com.user.open-llm-proxy"
 
 
 def _launchctl(*cmd: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["launchctl", *cmd], capture_output=True, text=True, check=False
+    return subprocess.run(  # fixed, trusted executable with controlled arguments  # noqa: S603
+        ["launchctl", *cmd],  # trusted platform executable with controlled arguments  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,  # trusted platform executable with controlled arguments
     )
 
 
@@ -209,6 +231,7 @@ def _service(args: argparse.Namespace) -> int:
 def _check_openrouter() -> tuple[bool, str]:
     try:
         from open_llm_proxy import openrouter_creds
+
         key = openrouter_creds.get_persisted_api_key()
         if key and key.strip():
             return True, "credential discoverable"
@@ -220,6 +243,7 @@ def _check_openrouter() -> tuple[bool, str]:
 def _check_opencode() -> tuple[bool, str]:
     try:
         from open_llm_proxy import opencode_creds
+
         key = opencode_creds.get_opencode_api_key()
         if key and key.strip():
             return True, "credential discoverable"
@@ -231,6 +255,7 @@ def _check_opencode() -> tuple[bool, str]:
 def _check_github_copilot() -> tuple[bool, str]:
     try:
         from open_llm_proxy import copilot_creds
+
         key = copilot_creds.get_oauth_token()
         if key and key.strip():
             return True, "credential discoverable"
@@ -242,6 +267,7 @@ def _check_github_copilot() -> tuple[bool, str]:
 def _check_claude_cli() -> tuple[bool, str]:
     try:
         from open_llm_proxy import creds
+
         key = creds.get_api_key()
         if key and key.strip():
             return True, "credential discoverable"
@@ -253,6 +279,7 @@ def _check_claude_cli() -> tuple[bool, str]:
 def _check_nvidia() -> tuple[bool, str]:
     try:
         from open_llm_proxy import nvidia_creds
+
         key = nvidia_creds.get_api_key()
         if key and key.strip():
             return True, "credential discoverable"
@@ -263,7 +290,9 @@ def _check_nvidia() -> tuple[bool, str]:
 
 def _run_opencode_login() -> int:
     try:
-        res = subprocess.run(["opencode", "auth", "login", "https://opencode.ai"])
+        res = subprocess.run(
+            ["opencode", "auth", "login", "https://opencode.ai"]  # noqa: S607
+        )  # trusted platform executable with controlled arguments
         if res.returncode != 0:
             print("Error: opencode auth login failed", file=sys.stderr)
             return res.returncode
@@ -280,7 +309,7 @@ def _run_opencode_login() -> int:
 def _run_github_copilot_login() -> int:
     try:
         res = subprocess.run(
-            [
+            [  # trusted platform executable with controlled arguments  # noqa: S607
                 "opencode",
                 "auth",
                 "login",
@@ -298,14 +327,19 @@ def _run_github_copilot_login() -> int:
         return 127
     ok, msg = _check_github_copilot()
     if not ok:
-        print(f"Error: github-copilot credential unresolved after authentication: {msg}", file=sys.stderr)
+        print(
+            f"Error: github-copilot credential unresolved after authentication: {msg}",
+            file=sys.stderr,
+        )  # intentional long protocol text or compatibility message
         return 1
     return 0
 
 
 def _run_claude_cli_login() -> int:
     try:
-        res = subprocess.run(["claude", "auth", "login"])
+        res = subprocess.run(
+            ["claude", "auth", "login"]  # noqa: S607
+        )  # trusted platform executable with controlled arguments
         if res.returncode != 0:
             print("Error: claude auth login failed", file=sys.stderr)
             return res.returncode
@@ -314,7 +348,9 @@ def _run_claude_cli_login() -> int:
         return 127
     ok, msg = _check_claude_cli()
     if not ok:
-        print(f"Error: claude-cli credential unresolved after authentication: {msg}", file=sys.stderr)
+        print(
+            f"Error: claude-cli credential unresolved after authentication: {msg}", file=sys.stderr
+        )  # intentional long protocol text or compatibility message
         return 1
     return 0
 
@@ -330,9 +366,7 @@ def _ensure_registry_account(provider: str) -> None:
     if account_registry.list_accounts(provider):
         return
     if provider == "openrouter":
-        account_registry.add_account(
-            provider, storage="env-line", ref="OPENROUTER_API_KEY"
-        )
+        account_registry.add_account(provider, storage="env-line", ref="OPENROUTER_API_KEY")
     elif provider == "opencode":
         account_registry.add_account(provider, storage="external", ref="opencode")
     elif provider == "github-copilot":
@@ -340,9 +374,7 @@ def _ensure_registry_account(provider: str) -> None:
     elif provider == "claude-cli":
         account_registry.add_account(provider, storage="external", ref="claude-default")
     elif provider == "nvidia":
-        account_registry.add_account(
-            provider, storage="env-line", ref="NVIDIA_API_KEY"
-        )
+        account_registry.add_account(provider, storage="env-line", ref="NVIDIA_API_KEY")
 
 
 def _capture_oauth_credential(provider: str) -> bytes | None:
@@ -361,7 +393,7 @@ def _capture_oauth_credential(provider: str) -> bytes | None:
                 data = json.loads(path.read_bytes())
                 if isinstance(data, dict) and "claudeAiOauth" in data:
                     return json.dumps(data).encode()
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
         return None
 
@@ -372,7 +404,7 @@ def _capture_oauth_credential(provider: str) -> bytes | None:
                 data = json.loads(path.read_bytes())
                 if isinstance(data, dict) and "opencode" in data:
                     return json.dumps(data).encode()
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
         return None
 
@@ -387,23 +419,21 @@ def _capture_oauth_credential(provider: str) -> bytes | None:
                     ghc.get(k) for k in ("access", "refresh", "oauth_token")
                 ):
                     return json.dumps({"github-copilot": ghc}).encode()
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
         # Fall back to copilot.json
-        fallback = Path.home() / ".config" / "open-llm-proxy" / "copilot.json"
+        fallback = resolve_config_dir() / "copilot.json"
         if fallback.is_file():
             try:
                 return fallback.read_bytes()
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
         return None
 
     return None
 
 
-def add_provider_account(
-    provider: str, name: str | None = None, key: str | None = None
-) -> int:
+def add_provider_account(provider: str, name: str | None = None, key: str | None = None) -> int:
     """Core logic to add a provider account shared by CLI and TUI.
 
     *provider* must be a key in PROVIDERS.
@@ -419,8 +449,8 @@ def add_provider_account(
 
     Returns exit code (0 = success).
     """
-    from open_llm_proxy.auth_migration import migrate_legacy_credentials
     from open_llm_proxy import account_registry
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
 
     migrate_legacy_credentials()
 
@@ -447,9 +477,7 @@ def add_provider_account(
                 if not sys.stdin.isatty():
                     key = sys.stdin.read().strip()
                 else:
-                    key = getpass.getpass(
-                        f"Enter {PROVIDERS[provider]['label']} API Key: "
-                    ).strip()
+                    key = getpass.getpass(f"Enter {PROVIDERS[provider]['label']} API Key: ").strip()
             except Exception as e:
                 print(f"Error reading API key: {e}", file=sys.stderr)
                 return 1
@@ -461,15 +489,20 @@ def add_provider_account(
             # Default account uses env-line storage
             if provider == "openrouter":
                 from open_llm_proxy import openrouter_creds
+
                 openrouter_creds.save_api_key(key)
             elif provider == "nvidia":
                 from open_llm_proxy import nvidia_creds
+
                 nvidia_creds.save_api_key(key)
             else:
                 from open_llm_proxy import env_creds
+
                 env_creds.set_env_key(f"{provider.upper()}_API_KEY", key)
             account_registry.add_account(
-                provider, name, storage="env-line",
+                provider,
+                name,
+                storage="env-line",
                 ref=f"{provider.upper()}_API_KEY".replace("-", "_"),
             )
         else:
@@ -512,7 +545,8 @@ def add_provider_account(
                 "github-copilot": "copilot-oauth",
             }
             account_registry.add_account(
-                provider, name,
+                provider,
+                name,
                 storage=storage_map.get(provider, "api-key"),
                 secret_bytes=cred_bytes,
             )
@@ -522,9 +556,7 @@ def add_provider_account(
                 "github-copilot": "copilot",
                 "claude-cli": "claude-default",
             }
-            account_registry.add_account(
-                provider, name, storage="external", ref=ref_map[provider]
-            )
+            account_registry.add_account(provider, name, storage="external", ref=ref_map[provider])
         print(f"Account {name!r} added for {provider}.")
         return 0
 
@@ -538,6 +570,7 @@ def _auth_set(args: argparse.Namespace) -> int:
     migrate_legacy_credentials()
 
     import getpass
+
     from open_llm_proxy import openrouter_creds
 
     provider = args.provider
@@ -579,6 +612,7 @@ def _auth_set(args: argparse.Namespace) -> int:
     elif provider == "nvidia":
         try:
             from open_llm_proxy import nvidia_creds
+
             if not sys.stdin.isatty():
                 key = sys.stdin.read().strip()
             else:
@@ -599,8 +633,8 @@ def _auth_set(args: argparse.Namespace) -> int:
 
 def _auth_accounts(args: argparse.Namespace) -> int:
     """List accounts per provider, marking the active one."""
-    from open_llm_proxy.auth_migration import migrate_legacy_credentials
     from open_llm_proxy import account_registry
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
 
     migrate_legacy_credentials()
 
@@ -629,8 +663,8 @@ def _auth_add(args: argparse.Namespace) -> int:
 
 def _auth_rename(args: argparse.Namespace) -> int:
     """Rename an account (requires >=2 accounts for the provider)."""
-    from open_llm_proxy.auth_migration import migrate_legacy_credentials
     from open_llm_proxy import account_registry
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
 
     migrate_legacy_credentials()
 
@@ -645,8 +679,8 @@ def _auth_rename(args: argparse.Namespace) -> int:
 
 def _auth_use(args: argparse.Namespace) -> int:
     """Set the active account for a provider."""
-    from open_llm_proxy.auth_migration import migrate_legacy_credentials
     from open_llm_proxy import account_registry
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
 
     migrate_legacy_credentials()
 
@@ -656,8 +690,9 @@ def _auth_use(args: argparse.Namespace) -> int:
         # call resolves fresh (defense in depth alongside the cache-key fix).
         try:
             from open_llm_proxy import creds as _creds
+
             _creds.clear_cache()
-        except Exception:
+        except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
             pass
         print(f"Active account for {args.provider} is now {args.name!r}.")
         return 0
@@ -668,15 +703,13 @@ def _auth_use(args: argparse.Namespace) -> int:
 
 def _auth_remove(args: argparse.Namespace) -> int:
     """Remove an account (--force to remove the last one)."""
-    from open_llm_proxy.auth_migration import migrate_legacy_credentials
     from open_llm_proxy import account_registry
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
 
     migrate_legacy_credentials()
 
     try:
-        account_registry.remove_account(
-            args.provider, args.name, force=args.force
-        )
+        account_registry.remove_account(args.provider, args.name, force=args.force)
         print(f"Account {args.name!r} removed from {args.provider}.")
         return 0
     except account_registry.AccountRegistryError as e:
@@ -685,14 +718,12 @@ def _auth_remove(args: argparse.Namespace) -> int:
 
 
 def _auth_check(args: argparse.Namespace) -> int:
-    from open_llm_proxy.auth_migration import migrate_legacy_credentials
     from open_llm_proxy import connectivity
+    from open_llm_proxy.auth_migration import migrate_legacy_credentials
 
     migrate_legacy_credentials()
 
-    providers_to_check = (
-        [args.provider] if args.provider else list(KNOWN_PROVIDERS)
-    )
+    providers_to_check = [args.provider] if args.provider else list(KNOWN_PROVIDERS)
 
     any_failed = False
     for p in providers_to_check:
@@ -721,6 +752,7 @@ def _auth_orchestrator(args: argparse.Namespace) -> int:
         print("[OK] openrouter: credential discoverable")
     else:
         from open_llm_proxy import openrouter_creds
+
         if not sys.stdin.isatty():
             key = sys.stdin.read().strip()
         else:
@@ -728,6 +760,7 @@ def _auth_orchestrator(args: argparse.Namespace) -> int:
                 key = openrouter_creds.get_api_key().strip()
             except Exception:
                 import getpass
+
                 try:
                     key = getpass.getpass("Enter OpenRouter API Key: ").strip()
                 except Exception as e:
@@ -783,6 +816,7 @@ def _auth_orchestrator(args: argparse.Namespace) -> int:
         print("[OK] nvidia: credential discoverable")
     else:
         from open_llm_proxy import nvidia_creds
+
         if not sys.stdin.isatty():
             key = sys.stdin.read().strip()
         else:
@@ -790,6 +824,7 @@ def _auth_orchestrator(args: argparse.Namespace) -> int:
                 key = nvidia_creds.get_api_key().strip()
             except Exception:
                 import getpass
+
                 try:
                     key = getpass.getpass("Enter NVIDIA API Key: ").strip()
                 except Exception as e:
@@ -816,7 +851,7 @@ def _setup(args: argparse.Namespace) -> int:
     from open_llm_proxy.setup import configure
 
     interactive = not args.non_interactive and sys.stdin.isatty()
-    configure(args.config, interactive=interactive, force=args.force)
+    configure(find_agent_config(args.config), interactive=interactive, force=args.force)
     return 0
 
 
@@ -824,7 +859,7 @@ def _config(args: argparse.Namespace) -> int:
     from open_llm_proxy.config_gen import generate_config
 
     try:
-        config = generate_config(str(args.config))
+        config = generate_config(str(find_agent_config(args.config)))
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -848,7 +883,7 @@ def _reload(args: argparse.Namespace) -> int:
     import urllib.error
     import urllib.request
 
-    config_path = Path(args.config)
+    config_path = find_agent_config(args.config)
     try:
         expected_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
     except OSError as exc:
@@ -862,7 +897,9 @@ def _reload(args: argparse.Namespace) -> int:
 
     def _health() -> dict | None:
         try:
-            with urllib.request.urlopen(health_url, timeout=2) as response:
+            with urllib.request.urlopen(  # noqa: S310
+                health_url, timeout=2
+            ) as response:  # user-supplied URL is intentionally opened by this CLI
                 if response.status != 200:
                     return None
                 data = json.loads(response.read())
@@ -873,8 +910,7 @@ def _reload(args: argparse.Namespace) -> int:
     health = _health()
     if not health or "config_hash" not in health:
         print(
-            "Error: proxy is not reachable or lacks the reload contract "
-            f"({health_url})",
+            f"Error: proxy is not reachable or lacks the reload contract ({health_url})",
             file=sys.stderr,
         )
         return 1
@@ -883,14 +919,16 @@ def _reload(args: argparse.Namespace) -> int:
         return 0
 
     payload = json.dumps({"expected_hash": expected_hash}).encode()
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # CLI permits user URL  # noqa: S310
         reload_url,
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(  # noqa: S310
+            request, timeout=timeout
+        ) as response:  # user-supplied URL is intentionally opened by this CLI
             result = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -930,7 +968,9 @@ def _models(args: argparse.Namespace) -> int:
         command.append(args.provider)
 
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = subprocess.run(  # noqa: S603
+            command, capture_output=True, text=True, check=False
+        )  # fixed, trusted executable with controlled arguments
     except FileNotFoundError:
         print(
             f"Error: '{args.opencode}' was not found. Install OpenCode or pass "
@@ -944,7 +984,9 @@ def _models(args: argparse.Namespace) -> int:
         print(f"Error: model discovery failed: {detail}", file=sys.stderr)
         return result.returncode
 
-    models = list(dict.fromkeys(line.strip() for line in result.stdout.splitlines() if line.strip()))
+    models = list(
+        dict.fromkeys(line.strip() for line in result.stdout.splitlines() if line.strip())
+    )  # intentional long protocol text or compatibility message
     if args.search:
         needle = args.search.casefold()
         models = [model for model in models if needle in model.casefold()]
@@ -961,6 +1003,7 @@ def _handle_bare_auth(args: argparse.Namespace) -> int:
     if sys.stdin.isatty() and not getattr(args, "no_tui", False):
         try:
             from open_llm_proxy.auth_tui import run_auth_tui
+
             return run_auth_tui()
         except ImportError:
             # questionary not installed — fall through to orchestrator
@@ -986,7 +1029,11 @@ def build_parser() -> argparse.ArgumentParser:
         "serve",
         help="Start the OpenAI-compatible proxy server.",
     )
-    serve_parser.add_argument("--host", default="0.0.0.0", help="Host address to bind (default: 0.0.0.0, reachable over Tailscale).")
+    serve_parser.add_argument(
+        "--host",
+        default=os.environ.get("OPEN_LLM_PROXY_HOST", "127.0.0.1"),
+        help="Host address to bind (default: 127.0.0.1; remote binding is opt-in).",
+    )
     serve_parser.add_argument(
         "--port",
         type=int,
@@ -998,8 +1045,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--config-path",
         dest="config",
         type=Path,
-        default=DEFAULT_CONFIG,
-        help=f"Agent configuration path (default: {DEFAULT_CONFIG}).",
+        default=None,
+        help="Agent configuration path (or use OPEN_LLM_PROXY_CONFIG).",
     )
     serve_parser.add_argument(
         "--disable-admin-ui",
@@ -1056,8 +1103,8 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument(
         "--config",
         type=Path,
-        default=DEFAULT_CONFIG,
-        help=f"Agent configuration path (default: {DEFAULT_CONFIG}).",
+        default=None,
+        help="Agent configuration path (or use the documented resolver defaults).",
     )
     setup_parser.add_argument(
         "--non-interactive",
@@ -1081,8 +1128,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--config-path",
         dest="config",
         type=Path,
-        default=DEFAULT_CONFIG,
-        help=f"Agent configuration path (default: {DEFAULT_CONFIG}).",
+        default=None,
+        help="Agent configuration path (or use the documented resolver defaults).",
     )
     config_parser.add_argument(
         "--format",
@@ -1103,8 +1150,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--config-path",
         dest="config",
         type=Path,
-        default=DEFAULT_CONFIG,
-        help=f"Deployed agent configuration path (default: {DEFAULT_CONFIG}).",
+        default=None,
+        help="Deployed agent configuration path (or use the documented resolver defaults).",
     )
     reload_parser.add_argument(
         "--port",

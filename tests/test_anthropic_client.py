@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -69,8 +68,10 @@ async def test_stream_messages_success():
     ]
     mock_resp = MockResponse(200, lines=lines)
 
-    with patch.object(creds, "get_api_key", return_value="sk-ant-api03-test"), \
-         patch.object(httpx.AsyncClient, "stream", return_value=AsyncContextManagerMock(mock_resp)):
+    with (
+        patch.object(creds, "get_api_key", return_value="sk-ant-api03-test"),
+        patch.object(httpx.AsyncClient, "stream", return_value=AsyncContextManagerMock(mock_resp)),
+    ):
         events = []
         async for ev, data in anthropic_client.stream_messages(payload):
             events.append((ev, data))
@@ -85,7 +86,9 @@ async def test_stream_messages_success():
 async def test_stream_messages_401_retry():
     payload = {"model": "claude-sonnet-5", "messages": []}
     mock_401_resp = MockResponse(401, content=b"Unauthorized")
-    mock_200_resp = MockResponse(200, lines=["event: message_start", 'data: {"type": "message_start"}', ""])
+    mock_200_resp = MockResponse(
+        200, lines=["event: message_start", 'data: {"type": "message_start"}', ""]
+    )
 
     call_count = 0
 
@@ -96,10 +99,11 @@ async def test_stream_messages_401_retry():
             return AsyncContextManagerMock(mock_401_resp)
         return AsyncContextManagerMock(mock_200_resp)
 
-    with patch.object(creds, "get_api_key", return_value="sk-ant-api03-old") as mock_get_key, \
-         patch.object(creds, "refresh_anthropic_oauth") as mock_refresh, \
-         patch.object(httpx.AsyncClient, "stream", side_effect=mock_stream):
-        
+    with (
+        patch.object(creds, "get_api_key", return_value="sk-ant-api03-old"),
+        patch.object(creds, "refresh_anthropic_oauth") as mock_refresh,
+        patch.object(httpx.AsyncClient, "stream", side_effect=mock_stream),
+    ):
         events = []
         async for ev, data in anthropic_client.stream_messages(payload):
             events.append((ev, data))
@@ -115,9 +119,12 @@ async def test_stream_messages_429_rate_limit():
     payload = {"model": "claude-sonnet-5", "messages": []}
     mock_429_resp = MockResponse(429, content=b"Rate Limit Exceeded", headers={"retry-after": "15"})
 
-    with patch.object(creds, "get_api_key", return_value="sk-ant-api03-test"), \
-         patch.object(httpx.AsyncClient, "stream", return_value=AsyncContextManagerMock(mock_429_resp)):
-        
+    with (
+        patch.object(creds, "get_api_key", return_value="sk-ant-api03-test"),
+        patch.object(
+            httpx.AsyncClient, "stream", return_value=AsyncContextManagerMock(mock_429_resp)
+        ),
+    ):
         with pytest.raises(RateLimitError) as exc_info:
             async for _, _ in anthropic_client.stream_messages(payload):
                 pass
@@ -127,6 +134,7 @@ async def test_stream_messages_429_rate_limit():
 
 
 @pytest.mark.anyio
+@pytest.mark.integration
 async def test_integration_call_skippable():
     # Attempt a real call if we have credentials, else skip.
     try:

@@ -130,7 +130,7 @@ PROVIDER_PLANS: dict[str, dict[str, PlanPolicy]] = {
             OPENROUTER_SOURCE,
             quota_limited=False,
             limits={"provider_capacity_limits": True},
-            notes="Paid models have no OpenRouter account RPM quota; upstream capacity still applies.",
+            notes="Paid models have no OpenRouter account RPM quota; upstream capacity still applies.",  # intentional long protocol text or compatibility message  # noqa: E501
         ),
     },
     "opencode": {

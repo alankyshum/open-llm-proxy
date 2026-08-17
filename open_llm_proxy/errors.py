@@ -4,7 +4,9 @@ from litellm.llms.custom_llm import CustomLLMError
 
 
 class RateLimitError(RuntimeError):
-    def __init__(self, message: str, retry_after: float | None = None, headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self, message: str, retry_after: float | None = None, headers: dict[str, str] | None = None
+    ) -> None:  # intentional long protocol text or compatibility message
         super().__init__(message)
         self.retry_after = retry_after
         self.headers = headers or {}

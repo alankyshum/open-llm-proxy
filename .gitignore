@@ -6,3 +6,17 @@ tmp_smoke/
 *.egg-info/
 dist/
 build/
+.codegraph/
+.env
+.env.*
+!.env.example
+*.log
+*.db
+*.db-shm
+*.db-wal
+state.sqlite3
+.DS_Store
+.ruff_cache/
+.venv*
+agent-config.yml
+accounts.json

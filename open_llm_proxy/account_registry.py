@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from open_llm_proxy.config_paths import resolve_config_dir
 
 ACCOUNT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 MAX_ACCOUNT_NAME_LEN = 32
@@ -29,11 +30,8 @@ def _storage_ext(storage: str) -> str:
 
 
 def CONFIG_DIR() -> Path:
-    """Config directory, respecting OLP_CONFIG_DIR env override."""
-    override = os.environ.get("OLP_CONFIG_DIR")
-    if override:
-        return Path(override)
-    return Path.home() / ".config" / "open-llm-proxy"
+    """Config directory; OLP_CONFIG_DIR remains a back-compat alias."""
+    return resolve_config_dir()
 
 
 def _registry_path() -> Path:
@@ -72,6 +70,7 @@ class AccountInfo:
 
 # ---- Internal I/O ----------------------------------------------------------------
 
+
 def _read_registry() -> dict:
     """Read accounts.json, returning empty skeleton if file missing."""
     path = _registry_path()
@@ -93,9 +92,7 @@ def _write_registry(data: dict) -> None:
     try:
         os.chmod(str(path.parent), 0o700)
     except Exception as e:
-        raise AccountRegistryError(
-            f"Failed to set permissions on config directory: {e}"
-        ) from e
+        raise AccountRegistryError(f"Failed to set permissions on config directory: {e}") from e
     fd, tmp_str = tempfile.mkstemp(dir=str(path.parent), prefix="accounts_tmp_")
     tmp_path = Path(tmp_str)
     try:
@@ -107,14 +104,12 @@ def _write_registry(data: dict) -> None:
         try:
             os.chmod(str(path), 0o600)
         except Exception as e:
-            raise AccountRegistryError(
-                f"Failed to set permissions on registry file: {e}"
-            ) from e
+            raise AccountRegistryError(f"Failed to set permissions on registry file: {e}") from e
     except Exception as e:
         if tmp_path.exists():
             try:
                 tmp_path.unlink()
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
         raise e
 
@@ -125,9 +120,7 @@ def _write_secret_file(path: Path, content: bytes) -> None:
     try:
         os.chmod(str(path.parent), 0o700)
     except Exception as e:
-        raise AccountRegistryError(
-            f"Failed to set permissions on secrets directory: {e}"
-        ) from e
+        raise AccountRegistryError(f"Failed to set permissions on secrets directory: {e}") from e
     fd, tmp_str = tempfile.mkstemp(dir=str(path.parent), prefix="secret_tmp_")
     tmp_path = Path(tmp_str)
     try:
@@ -138,14 +131,12 @@ def _write_secret_file(path: Path, content: bytes) -> None:
         try:
             os.chmod(str(path), 0o600)
         except Exception as e:
-            raise AccountRegistryError(
-                f"Failed to set permissions on secret file: {e}"
-            ) from e
+            raise AccountRegistryError(f"Failed to set permissions on secret file: {e}") from e
     except Exception as e:
         if tmp_path.exists():
             try:
                 tmp_path.unlink()
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
         raise e
 
@@ -156,6 +147,7 @@ def _secret_rel_path(provider: str, name: str, storage: str) -> str:
 
 
 # ---- Public API ------------------------------------------------------------------
+
 
 def load() -> dict:
     """Read and return the full registry dict."""
@@ -217,17 +209,13 @@ def add_account(
 
     if name is None:
         if accounts:
-            raise AccountRegistryError(
-                "Account name required when provider already has accounts"
-            )
+            raise AccountRegistryError("Account name required when provider already has accounts")
         name = "default"
     else:
         name = normalize_account_name(name)
 
     if name in accounts:
-        raise AccountRegistryError(
-            f"Account {name!r} already exists for provider {provider!r}"
-        )
+        raise AccountRegistryError(f"Account {name!r} already exists for provider {provider!r}")
 
     created_at = datetime.now(timezone.utc).isoformat()
 
@@ -278,8 +266,7 @@ def rename_account(provider: str, old: str, new: str) -> None:
         raise AccountRegistryError(f"Account {new!r} already exists for {provider!r}")
     if len(accounts) < 2:
         raise AccountRegistryError(
-            "Cannot rename account: provider must have at least 2 accounts "
-            "before renaming"
+            "Cannot rename account: provider must have at least 2 accounts before renaming"
         )
 
     entry = accounts.pop(old)
@@ -334,8 +321,7 @@ def remove_account(provider: str, name: str, *, force: bool = False) -> None:
 
     if len(accounts) == 1 and not force:
         raise AccountRegistryError(
-            f"Cannot remove last account for {provider!r}. "
-            "Use force=True to remove."
+            f"Cannot remove last account for {provider!r}. Use force=True to remove."
         )
 
     entry = accounts.pop(name)

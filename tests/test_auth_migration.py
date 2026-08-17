@@ -4,71 +4,81 @@ from pathlib import Path
 
 import pytest
 
-
 # ---- Helpers ------------------------------------------------------------------
 
 
 def stub_all_creds_found(monkeypatch):
     """Make all legacy credential getters return a value."""
-    import open_llm_proxy.openrouter_creds
-    import open_llm_proxy.opencode_creds
     import open_llm_proxy.copilot_creds
     import open_llm_proxy.creds
     import open_llm_proxy.nvidia_creds
+    import open_llm_proxy.opencode_creds
+    import open_llm_proxy.openrouter_creds
 
     monkeypatch.setattr(
-        open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+        open_llm_proxy.openrouter_creds,
+        "get_persisted_api_key",
         lambda: "sk-or-migrated",
     )
     monkeypatch.setattr(
-        open_llm_proxy.opencode_creds, "get_opencode_api_key",
+        open_llm_proxy.opencode_creds,
+        "get_opencode_api_key",
         lambda: "oc-key-migrated",
     )
     monkeypatch.setattr(
-        open_llm_proxy.copilot_creds, "get_oauth_token",
+        open_llm_proxy.copilot_creds,
+        "get_oauth_token",
         lambda: "gho_migrated",
     )
     monkeypatch.setattr(
-        open_llm_proxy.creds, "get_api_key",
+        open_llm_proxy.creds,
+        "get_api_key",
         lambda: "sk-ant-migrated",
     )
     monkeypatch.setattr(
-        open_llm_proxy.nvidia_creds, "get_api_key",
+        open_llm_proxy.nvidia_creds,
+        "get_api_key",
         lambda: "nv-migrated",
     )
 
 
 def stub_all_creds_missing(monkeypatch):
     """Make all legacy credential getters raise so migration is no-op."""
-    import open_llm_proxy.openrouter_creds
-    import open_llm_proxy.opencode_creds
     import open_llm_proxy.copilot_creds
     import open_llm_proxy.creds
     import open_llm_proxy.nvidia_creds
+    import open_llm_proxy.opencode_creds
+    import open_llm_proxy.openrouter_creds
 
     def _raise(msg: str):
         def _inner():
             raise RuntimeError(msg)
+
         return _inner
 
     monkeypatch.setattr(
-        open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+        open_llm_proxy.openrouter_creds,
+        "get_persisted_api_key",
         _raise("no openrouter cred"),
     )
     monkeypatch.setattr(
-        open_llm_proxy.opencode_creds, "get_opencode_api_key",
+        open_llm_proxy.opencode_creds,
+        "get_opencode_api_key",
         _raise("no opencode cred"),
     )
     monkeypatch.setattr(
-        open_llm_proxy.copilot_creds, "get_oauth_token",
+        open_llm_proxy.copilot_creds,
+        "get_oauth_token",
         _raise("no copilot cred"),
     )
     monkeypatch.setattr(
-        open_llm_proxy.creds, "get_api_key",
+        open_llm_proxy.creds,
+        "get_api_key",
         _raise("no claude cred"),
     )
     monkeypatch.setattr(
-        open_llm_proxy.nvidia_creds, "get_api_key",
+        open_llm_proxy.nvidia_creds,
+        "get_api_key",
         _raise("no nvidia cred"),
     )
 
@@ -95,7 +105,11 @@ class TestMigrateLegacyCredentials:
 
         migrated = migrate_legacy_credentials()
         assert sorted(migrated) == [
-            "claude-cli", "github-copilot", "nvidia", "opencode", "openrouter",
+            "claude-cli",
+            "github-copilot",
+            "nvidia",
+            "opencode",
+            "openrouter",
         ]
 
         # Verify each was registered as @default
@@ -170,7 +184,8 @@ class TestMigrateLegacyCredentials:
         # Only openrouter works; opencode, copilot, claude, nvidia raise
         stub_all_creds_missing(monkeypatch)
         monkeypatch.setattr(
-            open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+            open_llm_proxy.openrouter_creds,
+            "get_persisted_api_key",
             lambda: "sk-or-only",
         )
         from open_llm_proxy.auth_migration import migrate_legacy_credentials

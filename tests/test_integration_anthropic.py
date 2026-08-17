@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from open_llm_proxy import creds, anthropic_client, translator
+from open_llm_proxy import anthropic_client, creds, translator
 from open_llm_proxy.errors import RateLimitError
 
 
@@ -16,7 +16,9 @@ def resolve_key():
 has_creds = resolve_key() is not None
 
 
-@pytest.mark.skipif(not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain")
+@pytest.mark.skipif(
+    not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain"
+)
 @pytest.mark.anyio
 async def test_sonnet_stream_unlock():
     # Reset global client to avoid Event Loop Closed error from prior tests
@@ -44,7 +46,9 @@ async def test_sonnet_stream_unlock():
     assert len(payload["system"]) >= 1
     first_block = payload["system"][0]
     assert first_block["type"] == "text"
-    assert "cc_entrypoint=sdk-cli;" in first_block["text"], "cc_entrypoint=sdk-cli; must be in the first system block"
+    assert "cc_entrypoint=sdk-cli;" in first_block["text"], (
+        "cc_entrypoint=sdk-cli; must be in the first system block"
+    )
 
     # 3. Stream messages
     assistant_text = []

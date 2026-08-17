@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import json
 import os
-import stat
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from open_llm_proxy.account_registry import (
-    CONFIG_DIR,
-    AccountInfo,
     AccountRegistryError,
     active_account,
     add_account,
@@ -25,8 +20,8 @@ from open_llm_proxy.account_registry import (
     set_active,
 )
 
-
 # ---- Fixtures --------------------------------------------------------------------
+
 
 @pytest.fixture
 def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -38,6 +33,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 # ---- normalize_account_name --------------------------------------------------------
+
 
 class TestNormalizeAccountName:
     def test_lowercases(self):
@@ -70,6 +66,7 @@ class TestNormalizeAccountName:
 
 
 # ---- add_account ------------------------------------------------------------------
+
 
 class TestAddAccount:
     def test_add_first_auto_names_default_and_active(self, cfg: Path):
@@ -118,9 +115,7 @@ class TestAddAccount:
             add_account("openrouter", storage="env-line")
 
     def test_env_line_with_ref_no_file_created(self, cfg: Path):
-        info = add_account(
-            "openrouter", storage="env-line", ref="OPENROUTER_API_KEY"
-        )
+        info = add_account("openrouter", storage="env-line", ref="OPENROUTER_API_KEY")
         assert info.ref == "OPENROUTER_API_KEY"
         # verify no secret file was created
         assert read_secret("openrouter", "default") is None
@@ -130,6 +125,7 @@ class TestAddAccount:
 
 
 # ---- list_accounts / list_providers / active_account / load -----------------------
+
 
 class TestQuery:
     def test_list_providers_sorted(self, cfg: Path):
@@ -161,6 +157,7 @@ class TestQuery:
 
 
 # ---- rename_account ----------------------------------------------------------------
+
 
 class TestRenameAccount:
     def test_rename_guard_single_account_raises(self, cfg: Path):
@@ -215,6 +212,7 @@ class TestRenameAccount:
 
 # ---- set_active -------------------------------------------------------------------
 
+
 class TestSetActive:
     def test_set_active_switches(self, cfg: Path):
         add_account("claude-cli", storage="api-key", secret_bytes=b"sk-1")
@@ -234,6 +232,7 @@ class TestSetActive:
 
 
 # ---- remove_account ---------------------------------------------------------------
+
 
 class TestRemoveAccount:
     def test_remove_non_last_repoints_active(self, cfg: Path):
@@ -288,6 +287,7 @@ class TestRemoveAccount:
 
 # ---- Secret file round-trip & permissions -----------------------------------------
 
+
 class TestSecrets:
     def test_read_secret_round_trip(self, cfg: Path):
         add_account("claude-cli", storage="api-key", secret_bytes=b"my-secret-key")
@@ -319,6 +319,7 @@ class TestSecrets:
 
 
 # ---- resolve_secret_ref -----------------------------------------------------------
+
 
 class TestResolveSecretRef:
     def test_file_ref_returns_absolute_path(self, cfg: Path):

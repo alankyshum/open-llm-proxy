@@ -10,7 +10,6 @@ from urllib.parse import unquote_to_bytes
 
 from open_llm_proxy.attachment_spool import spool_attachment
 
-
 _TEXT_MIME_TYPES = {"application/json", "application/xml"}
 # Tool parts are preserved because the downstream translator handles their pairing.
 _TRANSLATOR_PASSTHROUGH_PART_TYPES = {"toolresult", "tooluse"}
@@ -151,10 +150,7 @@ def _normalize_part(part: Any) -> dict:
 
         return {
             "type": "text",
-            "text": (
-                f"[attachment: {label} ({mime_label}){size} — "
-                "content not inline-renderable]"
-            ),
+            "text": (f"[attachment: {label} ({mime_label}){size} — content not inline-renderable]"),
         }
     except Exception:
         # An upstream client must never be able to make the request hook fail.

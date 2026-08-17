@@ -3,15 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Any, AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
-from litellm.llms.custom_llm import CustomLLM, CustomLLMError
+from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk, ModelResponse
 
 from open_llm_proxy import anthropic_client, translator
 
 
-def chunk_to_generic(ch: dict[str, Any], is_finished: bool = False, finish_reason: str = "") -> GenericStreamingChunk:
+def chunk_to_generic(
+    ch: dict[str, Any], is_finished: bool = False, finish_reason: str = ""
+) -> GenericStreamingChunk:  # intentional long protocol text or compatibility message
     choices = ch.get("choices", [])
     text = ""
     tool_use = None
@@ -24,7 +27,7 @@ def chunk_to_generic(ch: dict[str, Any], is_finished: bool = False, finish_reaso
         tcalls = delta.get("tool_calls", None)
         if tcalls and len(tcalls) > 0:
             tool_use = tcalls[0]
-    
+
     chunk: GenericStreamingChunk = {
         "text": text,
         "is_finished": is_finished,
@@ -48,26 +51,30 @@ def anthropic_response_to_model_response(
             content_parts.append(block.get("text", ""))
         elif block.get("type") == "tool_use":
             args_in = block.get("input", {})
-            transformed = translator.apply_rtk_to_args(args_in) if isinstance(args_in, dict) else args_in
+            transformed = (
+                translator.apply_rtk_to_args(args_in) if isinstance(args_in, dict) else args_in
+            )  # intentional long protocol text or compatibility message
             args_str = json.dumps(transformed, separators=(",", ":"))
-            tool_calls.append({
-                "id": block.get("id"),
-                "type": "function",
-                "function": {
-                    "name": block.get("name"),
-                    "arguments": args_str,
+            tool_calls.append(
+                {
+                    "id": block.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": block.get("name"),
+                        "arguments": args_str,
+                    },
                 }
-            })
-    
+            )
+
     content_str = "".join(content_parts)
     stop_reason = raw.get("stop_reason") or "end_turn"
     finish_reason = translator._ANTHROPIC_FINISH_MAP.get(stop_reason, "stop")
-    
+
     usage = raw.get("usage") or {}
     prompt_tokens = int(usage.get("input_tokens", 0))
     completion_tokens = int(usage.get("output_tokens", 0))
     total_tokens = prompt_tokens + completion_tokens
-    
+
     return ModelResponse(
         id=f"chatcmpl-{raw.get('id', uuid.uuid4().hex)}",
         choices=[
@@ -78,30 +85,30 @@ def anthropic_response_to_model_response(
                     "role": "assistant",
                     "content": content_str if content_str else None,
                     "tool_calls": tool_calls if tool_calls else None,
-                }
+                },
             }
         ],
         model=model,
         usage={
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens
-        }
+            "total_tokens": total_tokens,
+        },
     )
 
 
 class ClaudeCliLLM(CustomLLM):
     def streaming(self, *args, **kwargs) -> Iterator[GenericStreamingChunk]:
         async_gen = self.astreaming(*args, **kwargs)
-        
+
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+
         queue = asyncio.Queue()
-        
+
         async def producer():
             try:
                 async for item in async_gen:
@@ -110,9 +117,9 @@ class ClaudeCliLLM(CustomLLM):
                 await queue.put((True, e))
             finally:
                 await queue.put((True, None))
-                
-        task = loop.create_task(producer())
-        
+
+        loop.create_task(producer())
+
         while True:
             try:
                 is_done, val = loop.run_until_complete(queue.get())
@@ -129,23 +136,23 @@ class ClaudeCliLLM(CustomLLM):
         messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
         optional_params = kwargs.get("optional_params") or {}
         litellm_params = kwargs.get("litellm_params") or {}
-        
+
         tools = kwargs.get("tools") or optional_params.get("tools")
         max_tokens = kwargs.get("max_tokens") or optional_params.get("max_tokens")
         temperature = kwargs.get("temperature") or optional_params.get("temperature")
-        
+
         account = (
             kwargs.get("claude_account")
             or optional_params.get("claude_account")
             or litellm_params.get("claude_account")
         )
-        
+
         model_str = model
         if model_str.startswith("claude-cli/"):
-            model_str = model_str[len("claude-cli/"):]
-            
+            model_str = model_str[len("claude-cli/") :]
+
         base_model, thinking_level = translator.parse_model(model_str)
-        
+
         payload = translator.build_anthropic_payload(
             model=base_model,
             openai_messages=messages,
@@ -155,7 +162,7 @@ class ClaudeCliLLM(CustomLLM):
             temperature=temperature,
             stream=True,
         )
-        
+
         state: dict[str, Any] = {
             "role_emitted": False,
             "next_tool_idx": 0,
@@ -167,21 +174,29 @@ class ClaudeCliLLM(CustomLLM):
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-        
+
         try:
-            async for event_name, event_data in anthropic_client.stream_messages(payload, account=account):
+            async for event_name, event_data in anthropic_client.stream_messages(
+                payload, account=account
+            ):  # intentional long protocol text or compatibility message
                 chunks = translator.anthropic_event_to_openai_chunks(
-                    event_name, event_data,
-                    completion_id=completion_id, model=base_model, state=state,
+                    event_name,
+                    event_data,
+                    completion_id=completion_id,
+                    model=base_model,
+                    state=state,
                 )
                 for ch in chunks:
                     yield chunk_to_generic(ch, is_finished=False, finish_reason="")
-                    
+
             finish = state.get("finish_reason") or "stop"
             usage_block = {
                 "prompt_tokens": state["usage"].get("prompt_tokens", 0),
                 "completion_tokens": state["usage"].get("completion_tokens", 0),
-                "total_tokens": state["usage"].get("prompt_tokens", 0) + state["usage"].get("completion_tokens", 0)
+                "total_tokens": state["usage"].get("prompt_tokens", 0)
+                + state["usage"].get(
+                    "completion_tokens", 0
+                ),  # intentional long protocol text or compatibility message
             }
             yield {
                 "text": "",
@@ -193,10 +208,11 @@ class ClaudeCliLLM(CustomLLM):
             }
         except Exception as e:
             from open_llm_proxy.errors import map_rate_limit_error
-            rate_limit_key = f"claude-cli@{account}/{model_str}" if account else f"claude-cli/{model_str}"
-            raise map_rate_limit_error(
-                e, rate_limit_origin_key=rate_limit_key
-            )
+
+            rate_limit_key = (
+                f"claude-cli@{account}/{model_str}" if account else f"claude-cli/{model_str}"
+            )  # intentional long protocol text or compatibility message
+            raise map_rate_limit_error(e, rate_limit_origin_key=rate_limit_key) from e
 
     def completion(self, *args, **kwargs) -> ModelResponse:
         try:
@@ -204,7 +220,7 @@ class ClaudeCliLLM(CustomLLM):
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+
         return loop.run_until_complete(self.acompletion(*args, **kwargs))
 
     async def acompletion(self, *args, **kwargs) -> ModelResponse:
@@ -212,23 +228,23 @@ class ClaudeCliLLM(CustomLLM):
         messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
         optional_params = kwargs.get("optional_params") or {}
         litellm_params = kwargs.get("litellm_params") or {}
-        
+
         tools = kwargs.get("tools") or optional_params.get("tools")
         max_tokens = kwargs.get("max_tokens") or optional_params.get("max_tokens")
         temperature = kwargs.get("temperature") or optional_params.get("temperature")
-        
+
         account = (
             kwargs.get("claude_account")
             or optional_params.get("claude_account")
             or litellm_params.get("claude_account")
         )
-        
+
         model_str = model
         if model_str.startswith("claude-cli/"):
-            model_str = model_str[len("claude-cli/"):]
-            
+            model_str = model_str[len("claude-cli/") :]
+
         base_model, thinking_level = translator.parse_model(model_str)
-        
+
         payload = translator.build_anthropic_payload(
             model=base_model,
             openai_messages=messages,
@@ -238,16 +254,17 @@ class ClaudeCliLLM(CustomLLM):
             temperature=temperature,
             stream=False,
         )
-        
+
         try:
             raw_response = await anthropic_client.send_messages(payload, account=account)
             return anthropic_response_to_model_response(raw_response, model)
         except Exception as e:
             from open_llm_proxy.errors import map_rate_limit_error
-            rate_limit_key = f"claude-cli@{account}/{model_str}" if account else f"claude-cli/{model_str}"
-            raise map_rate_limit_error(
-                e, rate_limit_origin_key=rate_limit_key
-            )
+
+            rate_limit_key = (
+                f"claude-cli@{account}/{model_str}" if account else f"claude-cli/{model_str}"
+            )  # intentional long protocol text or compatibility message
+            raise map_rate_limit_error(e, rate_limit_origin_key=rate_limit_key) from e
 
 
 claude_cli_handler = ClaudeCliLLM()

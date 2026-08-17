@@ -1,3 +1,4 @@
+# Archived internal design record — not current documentation.
 # Implementation Plan: Multi-Account Auth + Interactive TUI for `open-llm-proxy auth`
 
 Status: COMPLETE — all phases (P1–P7) implemented, tested, and reviewed

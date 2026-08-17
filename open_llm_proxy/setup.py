@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from open_llm_proxy.config_gen import configured_model_tokens
+from open_llm_proxy.config_paths import find_agent_config
 from open_llm_proxy.rate_limit_catalog import DEFAULT_PLANS, PROVIDER_PLANS, get_plan_policy
 from open_llm_proxy.rate_limit_state import RateLimitStore, load_rate_limit_policy
 
@@ -44,10 +45,7 @@ def _print_inventory(store: RateLimitStore) -> None:
             f"  {row['provider']}/{row['model']}: "
             f"{row['plan']} ({row['label']}), fallback cooldown {cooldown}s"
         )
-        print(
-            f"    source: {row['source_url']} "
-            f"(checked {row['source_checked_at']})"
-        )
+        print(f"    source: {row['source_url']} (checked {row['source_checked_at']})")
 
 
 def configure(
@@ -82,9 +80,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--config",
-        default=Path.home() / ".config/open-llm-proxy/agent-config.yml",
+        default=None,
         type=Path,
-        help="Path to agent-config.yml",
+        help="Path to agent-config.yml (or use the documented resolver defaults).",
     )
     parser.add_argument(
         "--non-interactive",
@@ -98,7 +96,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     interactive = not args.non_interactive and sys.stdin.isatty()
-    configure(args.config, interactive=interactive, force=args.force)
+    configure(find_agent_config(args.config), interactive=interactive, force=args.force)
 
 
 if __name__ == "__main__":

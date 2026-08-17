@@ -1,6 +1,5 @@
 import pytest
 
-from open_llm_proxy import attachment_spool
 from open_llm_proxy.callbacks import AttachmentContentNormalizationCallback
 from open_llm_proxy.content_parts import normalize_content, normalize_messages
 
@@ -16,7 +15,18 @@ def isolated_spool_dir(tmp_path, monkeypatch):
 
 
 def test_pdf_file_data_uri_becomes_placeholder():
-    messages = [{"role": "user", "content": [{"type": "file", "filename": "a.pdf", "data": "data:application/pdf;base64,JVBERg=="}]}]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "file",
+                    "filename": "a.pdf",
+                    "data": "data:application/pdf;base64,JVBERg==",
+                }
+            ],
+        }
+    ]
     result = normalize_messages(messages)
     text = result[0]["content"][0]["text"]
     assert "a.pdf" in text and "application/pdf" in text
@@ -30,11 +40,16 @@ def test_text_file_data_uri_is_decoded():
 @pytest.mark.parametrize("part_type", ["file", "input_image"])
 def test_image_data_uri_becomes_image_url(part_type):
     content = [{"type": part_type, "data": "data:image/png;base64,aGVsbG8="}]
-    assert normalize_content(content) == [{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}}]
+    assert normalize_content(content) == [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}}
+    ]
 
 
 def test_standard_parts_and_strings_are_identity_noops():
-    content = [{"type": "text", "text": "hi"}, {"type": "image_url", "image_url": {"url": "https://x"}}]
+    content = [
+        {"type": "text", "text": "hi"},
+        {"type": "image_url", "image_url": {"url": "https://x"}},
+    ]
     messages = [{"role": "user", "content": content, "tool_calls": []}]
     assert normalize_content(content) is content
     assert normalize_messages(messages) is messages
@@ -54,10 +69,19 @@ def test_tool_result_parts_are_identity_noops(part_type):
 
 def test_tool_result_is_preserved_while_file_is_normalized():
     tool_result = {"type": "tool_result", "tool_call_id": "tool-1", "content": "result"}
-    messages = [{"role": "user", "content": [
-        tool_result,
-        {"type": "file", "filename": "a.pdf", "data": "data:application/pdf;base64,JVBERg=="},
-    ]}]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                tool_result,
+                {
+                    "type": "file",
+                    "filename": "a.pdf",
+                    "data": "data:application/pdf;base64,JVBERg==",
+                },
+            ],
+        }
+    ]
 
     result = normalize_messages(messages)
 
@@ -76,16 +100,28 @@ def test_malformed_part_does_not_raise_and_message_keys_are_preserved():
 @pytest.mark.anyio
 async def test_attachment_callback_rewrites_and_honors_disable(monkeypatch):
     callback = AttachmentContentNormalizationCallback()
-    data = {"messages": [{"role": "user", "content": [{"type": "document", "mime_type": "application/pdf", "filename": "x.pdf"}]}]}
+    data = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "document", "mime_type": "application/pdf", "filename": "x.pdf"}
+                ],
+            }
+        ]
+    }
     assert await callback.async_pre_call_hook(None, None, data, "completion") is data
     assert data["messages"][0]["content"][0]["type"] == "text"
     monkeypatch.setenv("OPEN_LLM_PROXY_NORMALIZE_ATTACHMENTS", "false")
-    disabled = {"messages": [{"role": "user", "content": [{"type": "file", "data": "data:text/plain,hi"}]}]}
+    disabled = {
+        "messages": [{"role": "user", "content": [{"type": "file", "data": "data:text/plain,hi"}]}]
+    }
     assert await callback.async_pre_call_hook(None, None, disabled, "completion") is None
 
 
 def _pdf_part(filename="invoice.pdf", body=b"%PDF-1.4 spooled body"):
     import base64
+
     encoded = base64.b64encode(body).decode()
     return {
         "type": "file",
@@ -114,6 +150,7 @@ def test_pdf_is_spooled_to_disk_and_path_appears_in_text(isolated_spool_dir):
 
 def test_raw_base64_field_without_data_uri_is_also_spooled(isolated_spool_dir):
     import base64
+
     body = b"\x89binary-not-an-image"
     part = {
         "type": "file",
@@ -138,9 +175,7 @@ def test_retrying_the_same_attachment_reuses_one_spooled_path(isolated_spool_dir
 
 
 def test_spool_failure_falls_back_to_the_legacy_placeholder(monkeypatch):
-    monkeypatch.setattr(
-        "open_llm_proxy.content_parts.spool_attachment", lambda *a, **k: None
-    )
+    monkeypatch.setattr("open_llm_proxy.content_parts.spool_attachment", lambda *a, **k: None)
 
     text = normalize_content([_pdf_part()])[0]["text"]
 

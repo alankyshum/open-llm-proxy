@@ -89,10 +89,10 @@ def install_gemini_shared_state_isolation() -> None:
     Idempotent and defensive against LiteLLM internal changes.
     """
     try:
+        from litellm.llms.vertex_ai.gemini import transformation as transform_mod
         from litellm.llms.vertex_ai.gemini import (
             vertex_and_google_ai_studio_gemini as handler_mod,
         )
-        from litellm.llms.vertex_ai.gemini import transformation as transform_mod
     except Exception as e:  # pragma: no cover - defensive
         log.warning("gemini isolation: could not import vertex modules: %s", e)
         return

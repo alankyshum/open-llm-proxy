@@ -64,9 +64,7 @@ rate_limit_policy:
 
 def test_store_caches_models_and_policy_metadata(tmp_path):
     store = RateLimitStore(tmp_path / "state.sqlite3", configured_plans={"openrouter": "free"})
-    store.register_models(
-        ["openrouter/model-a:free", "openrouter/model-b:free"]
-    )
+    store.register_models(["openrouter/model-a:free", "openrouter/model-b:free"])
 
     rows = store.inventory()
 
@@ -93,12 +91,8 @@ async def test_plan_cooldown_is_persisted_and_filters_until_expiry(tmp_path):
 
     await callback.async_log_failure_event(
         {
-            "exception": RateLimitedError(
-                origin_key="claude-cli/claude-sonnet-5"
-            ),
-            "litellm_params": {
-                "model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}
-            },
+            "exception": RateLimitedError(origin_key="claude-cli/claude-sonnet-5"),
+            "litellm_params": {"model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}},
         },
         None,
         None,
@@ -117,14 +111,13 @@ async def test_plan_cooldown_is_persisted_and_filters_until_expiry(tmp_path):
         "2026-07-10T05:00:00Z",
         "plan:pro",
     )
-    assert await callback.async_filter_deployments(
-        "chain", [claude, copilot], None
-    ) == [copilot]
+    assert await callback.async_filter_deployments("chain", [claude, copilot], None) == [copilot]
 
     callback._clock = lambda: now + timedelta(hours=5)
-    assert await callback.async_filter_deployments(
-        "chain", [claude, copilot], None
-    ) == [claude, copilot]
+    assert await callback.async_filter_deployments("chain", [claude, copilot], None) == [
+        claude,
+        copilot,
+    ]
 
 
 @pytest.mark.anyio
@@ -149,9 +142,7 @@ opencode:
 
     await callback.async_log_failure_event(
         {
-            "exception": RateLimitedError(
-                origin_key="google/gemini-3.5-flash"
-            ),
+            "exception": RateLimitedError(origin_key="google/gemini-3.5-flash"),
             "litellm_params": {"model_info": chain[0]["model_info"]},
         },
         None,
@@ -177,12 +168,8 @@ async def test_wrapped_fallback_rate_limit_does_not_poison_current_model(tmp_pat
 
     await callback.async_log_failure_event(
         {
-            "exception": WrappedProviderError(
-                RateLimitedError({"Retry-After": "90"})
-            ),
-            "litellm_params": {
-                "model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}
-            },
+            "exception": WrappedProviderError(RateLimitedError({"Retry-After": "90"})),
+            "litellm_params": {"model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}},
         },
         None,
         None,
@@ -211,11 +198,7 @@ async def test_midstream_fallback_rate_limit_does_not_poison_current_model(tmp_p
     await callback.async_log_failure_event(
         {
             "exception": error,
-            "litellm_params": {
-                "model_info": {
-                    "rate_limit_key": "github-copilot/gemini-3.5-flash"
-                }
-            },
+            "litellm_params": {"model_info": {"rate_limit_key": "github-copilot/gemini-3.5-flash"}},
         },
         None,
         None,
@@ -237,11 +220,7 @@ async def test_google_rate_limit_does_not_poison_copilot_fallback_metadata(tmp_p
     await callback.async_log_failure_event(
         {
             "exception": ProviderRateLimitedError("gemini"),
-            "litellm_params": {
-                "model_info": {
-                    "rate_limit_key": "github-copilot/gemini-3.5-flash"
-                }
-            },
+            "litellm_params": {"model_info": {"rate_limit_key": "github-copilot/gemini-3.5-flash"}},
         },
         None,
         None,
@@ -268,9 +247,7 @@ async def test_custom_provider_origin_overrides_mutated_fallback_metadata(tmp_pa
     await callback.async_log_failure_event(
         {
             "exception": error,
-            "litellm_params": {
-                "model_info": {"rate_limit_key": "google/gemini-3.5-flash"}
-            },
+            "litellm_params": {"model_info": {"rate_limit_key": "google/gemini-3.5-flash"}},
         },
         None,
         None,
@@ -278,9 +255,7 @@ async def test_custom_provider_origin_overrides_mutated_fallback_metadata(tmp_pa
     )
 
     assert callback.store.retry_at("google/gemini-3.5-flash") is None
-    assert callback.store.retry_at(
-        "github-copilot/gemini-3.5-flash"
-    ) == now + timedelta(seconds=60)
+    assert callback.store.retry_at("github-copilot/gemini-3.5-flash") == now + timedelta(seconds=60)
 
 
 @pytest.mark.anyio
@@ -298,18 +273,14 @@ async def test_direct_provider_retry_after_overrides_plan_default(tmp_path):
                 {"Retry-After": "90"},
                 origin_key="claude-cli/claude-sonnet-5",
             ),
-            "litellm_params": {
-                "model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}
-            },
+            "litellm_params": {"model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}},
         },
         None,
         None,
         None,
     )
 
-    assert callback.store.retry_at(
-        "claude-cli/claude-sonnet-5"
-    ) == now + timedelta(seconds=90)
+    assert callback.store.retry_at("claude-cli/claude-sonnet-5") == now + timedelta(seconds=90)
 
 
 @pytest.mark.anyio
@@ -329,9 +300,7 @@ async def test_all_persistently_limited_deployments_raise_specific_error(tmp_pat
     )
 
     with pytest.raises(Exception) as exc_info:
-        await callback.async_filter_deployments(
-            "claude-fable", [deployment(key)], None
-        )
+        await callback.async_filter_deployments("claude-fable", [deployment(key)], None)
 
     error = exc_info.value
     assert getattr(error, "status_code", None) == 429
@@ -352,9 +321,7 @@ async def test_non_rate_limit_does_not_create_event(tmp_path):
     await callback.async_log_failure_event(
         {
             "exception": RuntimeError("provider failed"),
-            "litellm_params": {
-                "model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}
-            },
+            "litellm_params": {"model_info": {"rate_limit_key": "claude-cli/claude-sonnet-5"}},
         },
         None,
         None,
@@ -375,10 +342,12 @@ def test_base_provider():
 
 def test_account_providers_have_independent_rate_limit_rows(tmp_path):
     store = RateLimitStore(tmp_path / "state.sqlite3")
-    store.register_models([
-        "claude-cli@work/claude-opus-4-8",
-        "claude-cli@home/claude-opus-4-8",
-    ])
+    store.register_models(
+        [
+            "claude-cli@work/claude-opus-4-8",
+            "claude-cli@home/claude-opus-4-8",
+        ]
+    )
 
     rows = store.inventory()
     assert len(rows) == 2

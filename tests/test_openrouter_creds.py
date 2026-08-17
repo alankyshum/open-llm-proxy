@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from open_llm_proxy.openrouter_creds import (
     get_api_key,
     get_persisted_api_key,

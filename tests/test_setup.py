@@ -28,9 +28,7 @@ opencode:
 
     assert store.configured_plan("claude-cli")[0] == "pro"
     assert store.configured_plan("google")[0] == "free"
-    assert {
-        (row["provider"], row["model"]) for row in store.inventory()
-    } == {
+    assert {(row["provider"], row["model"]) for row in store.inventory()} == {
         ("claude-cli", "claude-sonnet-5"),
         ("google", "gemini-3.5-flash"),
     }

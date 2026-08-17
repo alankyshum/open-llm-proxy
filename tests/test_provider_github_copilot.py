@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-import json
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -13,16 +10,16 @@ from litellm.utils import ModelResponse
 from open_llm_proxy import copilot_creds
 from open_llm_proxy.provider_github_copilot import (
     GithubCopilotLLM,
-    copilot_handler,
-    _initiator_for,
-    _has_image_part,
-    _normalize_tools_for_copilot,
     _ensure_object_schemas_have_properties,
-    copilot_chat_to_responses,
-    copilot_responses_to_chat,
-    _send_with_429_retry,
+    _has_image_part,
+    _initiator_for,
     _log_429_diagnostic,
+    _normalize_tools_for_copilot,
     _redact_429_diagnostic,
+    _send_with_429_retry,
+    copilot_chat_to_responses,
+    copilot_handler,
+    copilot_responses_to_chat,
 )
 
 
@@ -67,7 +64,10 @@ async def test_429_retries_once_then_returns_second_429(monkeypatch):
     monkeypatch.setattr("open_llm_proxy.provider_github_copilot.asyncio.sleep", AsyncMock())
 
     result = await _send_with_429_retry(
-        first, send, model="gpt-5-mini", endpoint="https://api.example.test",
+        first,
+        send,
+        model="gpt-5-mini",
+        endpoint="https://api.example.test",
     )
     assert result is second
     send.assert_awaited_once()
@@ -84,9 +84,7 @@ async def test_streaming_429_retries_and_raises_custom_error(monkeypatch):
     monkeypatch.setattr(
         handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
     )
-    monkeypatch.setattr(
-        "open_llm_proxy.provider_github_copilot.asyncio.sleep", AsyncMock()
-    )
+    monkeypatch.setattr("open_llm_proxy.provider_github_copilot.asyncio.sleep", AsyncMock())
 
     responses = [
         httpx.Response(
@@ -172,7 +170,7 @@ async def test_get_endpoint_for_model_dynamic(monkeypatch):
         "data": [
             {"id": "gpt-5.5", "supported_endpoints": ["/responses"]},
             {"id": "gpt-5-mini", "supported_endpoints": ["/chat/completions"]},
-            {"id": "custom-model", "supported_endpoints": ["/responses"]}
+            {"id": "custom-model", "supported_endpoints": ["/responses"]},
         ]
     }
 
@@ -182,7 +180,11 @@ async def test_get_endpoint_for_model_dynamic(monkeypatch):
         return m_client
 
     monkeypatch.setattr(handler, "_get_client", mock_get_client)
-    monkeypatch.setattr(copilot_creds, "get_copilot_token", AsyncMock(return_value=("mock_tok", "https://api.copilot.com")))
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
 
     ep = await handler.get_endpoint_for_model("github-copilot/custom-model")
     assert ep == "/responses"
@@ -196,16 +198,30 @@ def test_initiator_header_selection():
     assert _initiator_for({"messages": [{"role": "user", "content": "hi"}]}) == "user"
 
     # Tool message last -> initiator agent
-    assert _initiator_for({"messages": [
-        {"role": "user", "content": "hi"},
-        {"role": "tool", "tool_call_id": "call_123", "content": "done"}
-    ]}) == "agent"
+    assert (
+        _initiator_for(
+            {
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "tool", "tool_call_id": "call_123", "content": "done"},
+                ]
+            }
+        )
+        == "agent"
+    )
 
     # Assistant message last -> initiator agent
-    assert _initiator_for({"messages": [
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "content": "hello"}
-    ]}) == "agent"
+    assert (
+        _initiator_for(
+            {
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": "hello"},
+                ]
+            }
+        )
+        == "agent"
+    )
 
 
 def test_copilot_vision_request_detection():
@@ -213,9 +229,19 @@ def test_copilot_vision_request_detection():
     assert not _has_image_part({"messages": [{"role": "user", "content": "hello"}]})
 
     # Image payload list content -> True
-    assert _has_image_part({"messages": [
-        {"role": "user", "content": [{"type": "text", "text": "look"}, {"type": "image_url", "image_url": "foo"}]}
-    ]})
+    assert _has_image_part(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {"type": "image_url", "image_url": "foo"},
+                    ],
+                }
+            ]
+        }
+    )
 
 
 def test_tool_call_id_fidelity_responses_translation():
@@ -227,9 +253,18 @@ def test_tool_call_id_fidelity_responses_translation():
         "model": "gpt-5.5",
         "messages": [
             {"role": "user", "content": "run tool"},
-            {"role": "assistant", "tool_calls": [{"id": tool_id, "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": tool_id, "content": "sunny"}
-        ]
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": tool_id, "content": "sunny"},
+        ],
     }
 
     translated_req = copilot_chat_to_responses(openai_req)
@@ -237,7 +272,9 @@ def test_tool_call_id_fidelity_responses_translation():
     # Assert tool call and output have verbatim tool_id in the copilot input array
     input_items = translated_req["input"]
     assistant_tc_item = next(item for item in input_items if item.get("type") == "function_call")
-    tool_output_item = next(item for item in input_items if item.get("type") == "function_call_output")
+    tool_output_item = next(
+        item for item in input_items if item.get("type") == "function_call_output"
+    )
 
     assert assistant_tc_item["call_id"] == tool_id
     assert tool_output_item["call_id"] == tool_id
@@ -245,20 +282,13 @@ def test_tool_call_id_fidelity_responses_translation():
     # 2. Outbound Copilot response translated back to OpenAI
     copilot_resp = {
         "output": [
-            {
-                "type": "function_call",
-                "call_id": tool_id,
-                "name": "get_weather",
-                "arguments": "{}"
-            }
+            {"type": "function_call", "call_id": tool_id, "name": "get_weather", "arguments": "{}"}
         ],
-        "copilot_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        "copilot_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
     }
 
     openai_resp = copilot_responses_to_chat(
-        copilot_resp,
-        completion_id="chatcmpl-123",
-        model="github-copilot/gpt-5.5"
+        copilot_resp, completion_id="chatcmpl-123", model="github-copilot/gpt-5.5"
     )
 
     tcalls = openai_resp["choices"][0]["message"]["tool_calls"]
@@ -271,7 +301,11 @@ async def test_error_mapping_429_custom_llm_error(monkeypatch):
     handler = GithubCopilotLLM()
 
     # Mock token exchange
-    monkeypatch.setattr(copilot_creds, "get_copilot_token", AsyncMock(return_value=("mock_tok", "https://api.copilot.com")))
+    monkeypatch.setattr(
+        copilot_creds,
+        "get_copilot_token",
+        AsyncMock(return_value=("mock_tok", "https://api.copilot.com")),
+    )
 
     # Mock client to return 429
     mock_resp = MagicMock(spec=httpx.Response)
@@ -287,19 +321,17 @@ async def test_error_mapping_429_custom_llm_error(monkeypatch):
         return m_client
 
     monkeypatch.setattr(handler, "_get_client", mock_get_client)
-    monkeypatch.setattr(handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions"))
+    monkeypatch.setattr(
+        handler, "get_endpoint_for_model", AsyncMock(return_value="/chat/completions")
+    )
 
     with pytest.raises(CustomLLMError) as exc_info:
         await handler.acompletion(
-            model="github-copilot/gpt-5-mini",
-            messages=[{"role": "user", "content": "hi"}]
+            model="github-copilot/gpt-5-mini", messages=[{"role": "user", "content": "hi"}]
         )
     assert exc_info.value.status_code == 429
     assert exc_info.value.headers == {"retry-after": "30"}
-    assert (
-        exc_info.value.rate_limit_origin_key
-        == "github-copilot/gpt-5-mini"
-    )
+    assert exc_info.value.rate_limit_origin_key == "github-copilot/gpt-5-mini"
 
 
 @pytest.mark.anyio
@@ -350,7 +382,7 @@ def test_copilot_chat_to_responses_role_based_content_parts():
     # 1. assistant message with string content -> output_text
     req_assistant_str = {
         "model": "gpt-5.5",
-        "messages": [{"role": "assistant", "content": "hello from assistant"}]
+        "messages": [{"role": "assistant", "content": "hello from assistant"}],
     }
     res = copilot_chat_to_responses(req_assistant_str)
     assert res["input"][0]["content"] == [{"type": "output_text", "text": "hello from assistant"}]
@@ -358,7 +390,7 @@ def test_copilot_chat_to_responses_role_based_content_parts():
     # 2. user message with string content -> input_text
     req_user_str = {
         "model": "gpt-5.5",
-        "messages": [{"role": "user", "content": "hello from user"}]
+        "messages": [{"role": "user", "content": "hello from user"}],
     }
     res = copilot_chat_to_responses(req_user_str)
     assert res["input"][0]["content"] == [{"type": "input_text", "text": "hello from user"}]
@@ -366,7 +398,7 @@ def test_copilot_chat_to_responses_role_based_content_parts():
     # 3. system message -> input_text
     req_system_str = {
         "model": "gpt-5.5",
-        "messages": [{"role": "system", "content": "you are a system"}]
+        "messages": [{"role": "system", "content": "you are a system"}],
     }
     res = copilot_chat_to_responses(req_system_str)
     assert res["input"][0]["content"] == [{"type": "input_text", "text": "you are a system"}]
@@ -374,10 +406,9 @@ def test_copilot_chat_to_responses_role_based_content_parts():
     # 4. assistant message with a list of parts -> output_text
     req_assistant_list = {
         "model": "gpt-5.5",
-        "messages": [{
-            "role": "assistant",
-            "content": [{"type": "text", "text": "structured response"}]
-        }]
+        "messages": [
+            {"role": "assistant", "content": [{"type": "text", "text": "structured response"}]}
+        ],
     }
     res = copilot_chat_to_responses(req_assistant_list)
     assert res["input"][0]["content"] == [{"type": "output_text", "text": "structured response"}]
@@ -595,13 +626,15 @@ async def test_chat_stream_non_200_exact_4096_boundary(monkeypatch):
 # ── LIVE SHIELDED COMPLETION TESTS ───────────────────────────────────────────
 
 
-@pytest.mark.skipif(not has_copilot, reason="No GitHub Copilot credentials resolved on this machine")
+@pytest.mark.skipif(
+    not has_copilot, reason="No GitHub Copilot credentials resolved on this machine"
+)
 @pytest.mark.anyio
 async def test_live_copilot_gpt_5_5_responses_path():
     res = await copilot_handler.acompletion(
         model="github-copilot/gpt-5.5",
         messages=[{"role": "user", "content": "reply with the single word pong"}],
-        max_tokens=64
+        max_tokens=64,
     )
     assert isinstance(res, ModelResponse)
     content = res.choices[0].message.content
@@ -676,13 +709,16 @@ def test_ensure_object_schemas_handles_combinators():
     assert node["anyOf"][1] == {"type": "string"}
 
 
-@pytest.mark.skipif(not has_copilot, reason="No GitHub Copilot credentials resolved on this machine")
+@pytest.mark.skipif(
+    not has_copilot, reason="No GitHub Copilot credentials resolved on this machine"
+)
+@pytest.mark.integration
 @pytest.mark.anyio
 async def test_live_copilot_gpt_5_mini_chat_path():
     res = await copilot_handler.acompletion(
         model="github-copilot/gpt-5-mini",
         messages=[{"role": "user", "content": "reply with the single word pong"}],
-        max_tokens=64
+        max_tokens=64,
     )
     assert isinstance(res, ModelResponse)
     content = res.choices[0].message.content
@@ -703,10 +739,15 @@ class TestResponsesImagePartTranslation:
         url = "data:image/png;base64,aGVsbG8="
         req = {
             "model": "gpt-5.6-sol",
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": "what colour?"},
-                {"type": "image_url", "image_url": {"url": url}},
-            ]}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "what colour?"},
+                        {"type": "image_url", "image_url": {"url": url}},
+                    ],
+                }
+            ],
         }
 
         content = copilot_chat_to_responses(req)["input"][0]["content"]
@@ -715,28 +756,52 @@ class TestResponsesImagePartTranslation:
         assert content[1] == {"type": "input_image", "image_url": url}
 
     def test_bare_string_image_url_is_also_translated(self):
-        req = {"messages": [{"role": "user", "content": [
-            {"type": "image_url", "image_url": "https://example.com/a.png"},
-        ]}]}
+        req = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": "https://example.com/a.png"},
+                    ],
+                }
+            ]
+        }
 
         part = copilot_chat_to_responses(req)["input"][0]["content"][0]
 
         assert part == {"type": "input_image", "image_url": "https://example.com/a.png"}
 
     def test_detail_hint_is_preserved(self):
-        req = {"messages": [{"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": "https://x/a.png", "detail": "high"}},
-        ]}]}
+        req = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://x/a.png", "detail": "high"},
+                        },
+                    ],
+                }
+            ]
+        }
 
         part = copilot_chat_to_responses(req)["input"][0]["content"][0]
 
         assert part["type"] == "input_image" and part["detail"] == "high"
 
     def test_no_image_url_type_survives_translation(self):
-        req = {"messages": [{"role": "user", "content": [
-            {"type": "text", "text": "hi"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}},
-        ]}]}
+        req = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "hi"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}},
+                    ],
+                }
+            ]
+        }
 
         for item in copilot_chat_to_responses(req)["input"]:
             for part in item["content"]:
@@ -749,10 +814,12 @@ class TestResponsesImagePartTranslation:
         assert copilot_chat_to_responses(req)["input"][0]["content"][0] is part
 
     def test_assistant_and_other_part_types_are_unaffected(self):
-        req = {"messages": [
-            {"role": "assistant", "content": [{"type": "text", "text": "prior"}]},
-            {"role": "user", "content": [{"type": "input_file", "filename": "a.pdf"}]},
-        ]}
+        req = {
+            "messages": [
+                {"role": "assistant", "content": [{"type": "text", "text": "prior"}]},
+                {"role": "user", "content": [{"type": "input_file", "filename": "a.pdf"}]},
+            ]
+        }
 
         result = copilot_chat_to_responses(req)["input"]
 

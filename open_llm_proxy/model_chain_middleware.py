@@ -1,4 +1,5 @@
 import json
+
 from fastapi import FastAPI, Request
 
 
@@ -13,7 +14,7 @@ def rewrite_model_chain_body(body: bytes) -> bytes:
 
     model = data["model"]
     if model.startswith("open-llm-proxy/"):
-        model = model[len("open-llm-proxy/"):]
+        model = model[len("open-llm-proxy/") :]
     if not (model.startswith("[") and model.endswith("]") and "," in model):
         return body
 
@@ -23,6 +24,7 @@ def rewrite_model_chain_body(body: bytes) -> bytes:
 
 def install_model_chain_middleware(app: FastAPI):
     """Rewrite public comma-form chains to LiteLLM's internal semicolon alias."""
+
     @app.middleware("http")
     async def rewrite_model_chain_middleware(request: Request, call_next):
         if request.method == "POST" and request.url.path in (

@@ -10,8 +10,6 @@ them with a bare HTTP 400 ``Bad Request`` and triggers an infinite retry loop.
 
 import copy
 
-import pytest
-
 from open_llm_proxy.gemini_isolation import (
     _isolating_wrapper,
     install_gemini_shared_state_isolation,

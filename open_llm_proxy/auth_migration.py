@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import List
 
 log = logging.getLogger("open_llm_proxy.auth_migration")
 
@@ -34,7 +33,7 @@ def migrate_legacy_credentials() -> list[str]:
                         ref="OPENROUTER_API_KEY",
                     )
                     migrated.append("openrouter")
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
     except Exception as e:
         log.warning("migrate: openrouter skipped (%s)", e)
@@ -51,7 +50,7 @@ def migrate_legacy_credentials() -> list[str]:
                         "opencode", "default", storage="external", ref="opencode"
                     )
                     migrated.append("opencode")
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
     except Exception as e:
         log.warning("migrate: opencode skipped (%s)", e)
@@ -71,7 +70,7 @@ def migrate_legacy_credentials() -> list[str]:
                         ref="copilot",
                     )
                     migrated.append("github-copilot")
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
     except Exception as e:
         log.warning("migrate: github-copilot skipped (%s)", e)
@@ -91,7 +90,7 @@ def migrate_legacy_credentials() -> list[str]:
                         ref="claude-default",
                     )
                     migrated.append("claude-cli")
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
     except Exception as e:
         log.warning("migrate: claude-cli skipped (%s)", e)
@@ -111,7 +110,7 @@ def migrate_legacy_credentials() -> list[str]:
                         ref="NVIDIA_API_KEY",
                     )
                     migrated.append("nvidia")
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
     except Exception as e:
         log.warning("migrate: nvidia skipped (%s)", e)

@@ -24,9 +24,6 @@ def run_auth_tui() -> int:
     import questionary
 
     from open_llm_proxy.auth_migration import migrate_legacy_credentials
-    from open_llm_proxy import account_registry
-    from open_llm_proxy import cli
-    from open_llm_proxy import connectivity
 
     migrate_legacy_credentials()
 
@@ -118,8 +115,7 @@ def _tui_add(q: questionary) -> int:
             name = q.text(
                 f"Account name for this {providers[provider]['label']} credential:",
                 validate=lambda val: bool(
-                    val.strip()
-                    and account_registry.normalize_account_name(val.strip())
+                    val.strip() and account_registry.normalize_account_name(val.strip())
                 ),
             ).ask()
         except KeyboardInterrupt:
@@ -144,9 +140,7 @@ def _tui_add(q: questionary) -> int:
 
     elif auth_kind == "oauth-cli":
         try:
-            confirmed = q.confirm(
-                f"Run {providers[provider]['label']} login helper now?"
-            ).ask()
+            confirmed = q.confirm(f"Run {providers[provider]['label']} login helper now?").ask()
         except KeyboardInterrupt:
             return 0
         if confirmed is None or not confirmed:
@@ -193,9 +187,7 @@ def _tui_switch(q: questionary) -> int:
         return 1
 
     try:
-        provider = q.select(
-            "Provider:", choices=viable
-        ).ask()
+        provider = q.select("Provider:", choices=viable).ask()
     except KeyboardInterrupt:
         return 0
     if provider is None:
@@ -230,8 +222,7 @@ def _tui_rename(q: questionary) -> int:
     viable = [p for p in providers if len(account_registry.list_accounts(p)) >= 2]
     if not viable:
         print(
-            "No provider has multiple accounts yet.  "
-            "Add a second account before renaming.",
+            "No provider has multiple accounts yet.  Add a second account before renaming.",
             file=sys.stderr,
         )
         return 1
@@ -252,10 +243,12 @@ def _tui_rename(q: questionary) -> int:
         return 0
 
     try:
-        new = q.text("New name:", validate=lambda val: bool(
-            val.strip()
-            and account_registry.normalize_account_name(val.strip())
-        )).ask()
+        new = q.text(
+            "New name:",
+            validate=lambda val: bool(
+                val.strip() and account_registry.normalize_account_name(val.strip())
+            ),
+        ).ask()
     except KeyboardInterrupt:
         return 0
     if new is None or not new.strip():

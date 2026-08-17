@@ -1,19 +1,22 @@
+import hmac
+import json
 import os
 import sys
-import json
-import hmac
+
 print("SERVER_LAUNCHER: Python started, importing modules...", flush=True)
-import tempfile
-import logging
-import uvicorn
-import yaml
-from pathlib import Path
+import logging  # staged imports preserve startup diagnostics  # noqa: E402
+import tempfile  # staged imports preserve startup diagnostics  # noqa: E402
+from pathlib import Path  # staged imports preserve startup diagnostics  # noqa: E402
+
+import uvicorn  # staged imports preserve startup diagnostics  # noqa: E402
+import yaml  # staged imports preserve startup diagnostics  # noqa: E402
 
 # Wire callback registration
 print("SERVER_LAUNCHER: Importing litellm...", flush=True)
-import litellm
+import litellm  # staged imports preserve startup diagnostics  # noqa: E402
+
 print("SERVER_LAUNCHER: Importing open_llm_proxy callbacks/config...", flush=True)
-from open_llm_proxy.callbacks import (
+from open_llm_proxy.callbacks import (  # staged imports preserve startup diagnostics  # noqa: E402
     AttachmentContentNormalizationCallback,
     FallbackChainCommaRewriterCallback,
     GeminiThinkingBudgetCallback,
@@ -21,23 +24,32 @@ from open_llm_proxy.callbacks import (
     ServedByCallback,
     StickyRoutingCallback,
 )
-from open_llm_proxy.config_gen import (
+from open_llm_proxy.config_gen import (  # staged imports preserve startup diagnostics  # noqa: E402
     configured_model_tokens,
     configured_model_tokens_from_data,
     generate_config_from_data,
     parse_agent_config,
 )
-from open_llm_proxy.rate_limit_state import (
+from open_llm_proxy.config_paths import (  # staged import  # noqa: E402
+    find_agent_config,
+    resolve_config_dir,
+)
+from open_llm_proxy.gemini_isolation import (  # noqa: E402
+    install_gemini_shared_state_isolation,  # staged imports preserve startup diagnostics
+)
+from open_llm_proxy.rate_limit_state import (  # staged import  # noqa: E402
     PersistentRateLimitCallback,
     load_rate_limit_policy,
     load_rate_limit_policy_from_data,
 )
-from open_llm_proxy.streaming_safety import (
+from open_llm_proxy.reloader import (  # noqa: E402
+    ConfigReloader,  # staged imports preserve startup diagnostics
+)
+from open_llm_proxy.streaming_safety import (  # staged import  # noqa: E402
     install_non_stream_attribution,
     install_pre_first_chunk_fallback_only,
 )
-from open_llm_proxy.gemini_isolation import install_gemini_shared_state_isolation
-from open_llm_proxy.reloader import ConfigReloader
+
 print("SERVER_LAUNCHER: All imports done.", flush=True)
 
 log = logging.getLogger("open_llm_proxy.server_launcher")
@@ -46,6 +58,7 @@ log = logging.getLogger("open_llm_proxy.server_launcher")
 def register_attribution_endpoint(app):
     """Register authenticated loopback lookup for request attribution."""
     from fastapi import HTTPException, Request, Response
+
     from open_llm_proxy.attribution import get_attribution_token, global_attribution_store
 
     @app.get("/internal/attribution/v1/{attribution_id}")
@@ -106,12 +119,14 @@ def register_config_reload_endpoint(app, config_reloader):
 
     return reload_config
 
+
 # ---------------------------------------------------------------------------
 # Stable config lifecycle  — replaces ephemeral NamedTemporaryFile path
 # (LiteLLM's APScheduler re-reads the config every 30 s; a missing temp
 # path causes repeated "Config file not found" / credential DB errors.)
 # ---------------------------------------------------------------------------
 STABLE_CONFIG_BASENAME = "generated-litellm-config.yaml"
+
 
 def _resolve_stable_config_dir() -> Path:
     """Directory for the generated LiteLLM config.
@@ -120,16 +135,15 @@ def _resolve_stable_config_dir() -> Path:
     ``~/.config/open-llm-proxy`` (the canonical config directory already
     used for agent-config.yml, env, and the rate-limit SQLite DB).
     """
-    env_dir = os.environ.get("OPEN_LLM_PROXY_CONFIG_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return Path.home() / ".config" / "open-llm-proxy"
+    return resolve_config_dir()
+
 
 def resolve_stable_config_path() -> Path:
     """Persistent config path scoped to this proxy process."""
     stem = Path(STABLE_CONFIG_BASENAME).stem
     suffix = Path(STABLE_CONFIG_BASENAME).suffix
     return _resolve_stable_config_dir() / f"{stem}-{os.getpid()}{suffix}"
+
 
 def write_config_atomic(config_dict: dict, path: str | Path | None = None) -> str:
     """Write *config_dict* as YAML to *path* atomically with mode 0o600.
@@ -165,18 +179,15 @@ def write_config_atomic(config_dict: dict, path: str | Path | None = None) -> st
         raise
     return str(path)
 
-def setup_callbacks(
-    config_path: str | Path | None = None, *, config_data: dict | None = None
-):
+
+def setup_callbacks(config_path: str | Path | None = None, *, config_data: dict | None = None):
     """Register request transforms and persistent rate-limit tracking."""
     install_pre_first_chunk_fallback_only()
     install_gemini_shared_state_isolation()
     if not hasattr(litellm, "callbacks") or litellm.callbacks is None:
         litellm.callbacks = []
 
-    if not any(
-        isinstance(c, AttachmentContentNormalizationCallback) for c in litellm.callbacks
-    ):
+    if not any(isinstance(c, AttachmentContentNormalizationCallback) for c in litellm.callbacks):
         litellm.callbacks.append(AttachmentContentNormalizationCallback())
         log.info("AttachmentContentNormalizationCallback registered.")
 
@@ -207,9 +218,7 @@ def setup_callbacks(
         log.info("GeminiThinkingBudgetCallback registered.")
 
     # Register Fallback chain comma rewriter callback
-    if not any(
-        isinstance(c, FallbackChainCommaRewriterCallback) for c in litellm.callbacks
-    ):
+    if not any(isinstance(c, FallbackChainCommaRewriterCallback) for c in litellm.callbacks):
         rewriter_callback = FallbackChainCommaRewriterCallback()
         litellm.callbacks.append(rewriter_callback)
         log.info("FallbackChainCommaRewriterCallback registered.")
@@ -224,25 +233,6 @@ def setup_callbacks(
 
     return rate_limit_callback
 
-def find_agent_config() -> Path:
-    """
-    Finds agent-config.yml by traversing upwards or looking in the dotfiles workspace.
-    """
-    # Prefer non-TCC fallback path under .config if it exists
-    config_in_home = Path.home() / ".config" / "open-llm-proxy" / "agent-config.yml"
-    if config_in_home.exists():
-        return config_in_home
-
-    # 1. Check direct env var or relative to current working directory
-    paths_to_check = [
-        Path(os.getcwd()) / "config/agent-runtime/agent-config.yml",
-        Path(__file__).resolve().parents[3] / "config/agent-runtime/agent-config.yml",
-    ]
-    for p in paths_to_check:
-        if p.exists():
-            return p
-    # Fallback default
-    return Path("/Users/alanshum/Documents/dotfiles/config/agent-runtime/agent-config.yml")
 
 def launch_server(
     host: str = "127.0.0.1",
@@ -259,13 +249,22 @@ def launch_server(
     """
     print("SERVER_LAUNCHER: Finding agent config...", flush=True)
     if config_path is None:
-        config_path = find_agent_config()
+        try:
+            config_path = find_agent_config()
+        except FileNotFoundError as error:
+            print(f"Error: {error}", file=sys.stderr, flush=True)
+            sys.exit(1)
     else:
         config_path = Path(config_path)
 
+    if config_path is None:
+        raise RuntimeError("agent config path resolution returned None")
+    config_path = Path(config_path)
     if not config_path.exists():
         print(
-            f"Error: agent-config.yml not found at {config_path}",
+            f"Error: agent-config.yml not found at {config_path}. Set "
+            "OPEN_LLM_PROXY_CONFIG or provide --config; otherwise create "
+            "$XDG_CONFIG_HOME/open-llm-proxy/agent-config.yml or ./agent-config.yml.",
             file=sys.stderr,
             flush=True,
         )
@@ -281,10 +280,10 @@ def launch_server(
     # is configured (LiteLLM cannot serve the Admin UI without Postgres).
     env_disable_ui = os.environ.get("DISABLE_ADMIN_UI", "").lower() in ("true", "1")
 
-    resolved_database_url = database_url if database_url is not None else os.environ.get("DATABASE_URL")
-    resolved_master_key = master_key if master_key is not None else os.environ.get("LITELLM_MASTER_KEY")
+    resolved_database_url = database_url or os.environ.get("DATABASE_URL")
+    resolved_master_key = master_key or os.environ.get("LITELLM_MASTER_KEY")
     resolved_ui_username = ui_username if ui_username is not None else os.environ.get("UI_USERNAME")
-    resolved_ui_password = ui_password if ui_password is not None else os.environ.get("UI_PASSWORD")
+    resolved_ui_password = ui_password or os.environ.get("UI_PASSWORD")
 
     # Determine whether the UI should run.
     if disable_admin_ui is True:
@@ -306,6 +305,12 @@ def launch_server(
         ui_disabled = True
     else:
         ui_disabled = False
+
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        log.warning(
+            "Proxy is bound to %s; it has no built-in auth unless LITELLM_MASTER_KEY is set.",
+            host,
+        )
 
     if not resolved_master_key:
         import secrets
@@ -355,18 +360,21 @@ def launch_server(
         print("UI Status: Enabled", flush=True)
         print(f"Admin UI: http://{host}:{port}/ui", flush=True)
         print(
-            f"UI Username: {resolved_ui_username if resolved_ui_username else 'admin (LiteLLM default)'}",
+            f"UI Username: {resolved_ui_username if resolved_ui_username else 'admin (LiteLLM default)'}",  # intentional long protocol text or compatibility message  # noqa: E501
             flush=True,
         )
-    
+
     try:
         # Import app after CONFIG_FILE_PATH has been set to ensure the module-level load of
         # litellm.proxy.proxy_server parses the correct configuration.
         from litellm.proxy.proxy_server import app
+
         install_non_stream_attribution()
         from open_llm_proxy.usage_reporting import install_usage_reporting
+
         install_usage_reporting(app)
         from open_llm_proxy.model_chain_middleware import install_model_chain_middleware
+
         install_model_chain_middleware(app)
 
         config_reloader = ConfigReloader(
@@ -377,7 +385,7 @@ def launch_server(
             write_config=write_config_atomic,
             rate_limit_callback=rate_limit_callback,
         )
-        
+
         # Add healthz endpoint for sync-agents validation
         @app.get("/healthz")
         async def healthz():
@@ -385,23 +393,30 @@ def launch_server(
 
         register_attribution_endpoint(app)
         register_config_reload_endpoint(app, config_reloader)
-        
+
         if ui_disabled:
             from fastapi import Response
+
             @app.middleware("http")
             async def block_ui_middleware(request, call_next):
-                if request.url.path == "/ui" or request.url.path.startswith("/ui/") or request.url.path.startswith("/_next"):
+                if (
+                    request.url.path == "/ui"
+                    or request.url.path.startswith("/ui/")
+                    or request.url.path.startswith("/_next")
+                ):  # intentional long protocol text or compatibility message
                     return Response("Admin UI is disabled.", status_code=404)
                 return await call_next(request)
-        
+
         print(f"Starting programmatically on {host}:{port}...", flush=True)
         uvicorn.run(app, host=host, port=port)
     except Exception:
         log.exception("Fatal error during server startup")
         raise
 
+
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Launch open-llm-proxy programmatically")
     parser.add_argument("--host", default="127.0.0.1", help="Host address to bind to")
     parser.add_argument("--port", type=int, default=8765, help="Port to listen on")

@@ -71,9 +71,7 @@ def test_setup_delegates_to_rate_limit_configuration(monkeypatch, tmp_path):
     config_path = tmp_path / "agent-config.yml"
     monkeypatch.setattr(
         "open_llm_proxy.setup.configure",
-        lambda config, interactive, force: calls.append(
-            (config, interactive, force)
-        ),
+        lambda config, interactive, force: calls.append((config, interactive, force)),
     )
 
     assert (
@@ -98,9 +96,7 @@ def test_config_prints_generated_json(monkeypatch, tmp_path, capsys):
         lambda path: {"source": path},
     )
 
-    assert (
-        cli.main(["config", "--config", str(config_path), "--format", "json"]) == 0
-    )
+    assert cli.main(["config", "--config", str(config_path), "--format", "json"]) == 0
     assert capsys.readouterr().out == f'{{\n  "source": "{config_path}"\n}}\n'
 
 
@@ -112,6 +108,36 @@ def test_config_reports_generation_error(monkeypatch, capsys):
 
     assert cli.main(["config"]) == 1
     assert capsys.readouterr().err == "Error: bad config\n"
+
+
+def test_setup_default_config_uses_xdg_config_home(monkeypatch, tmp_path):
+    config_path = tmp_path / "open-llm-proxy" / "agent-config.yml"
+    config_path.parent.mkdir()
+    config_path.write_text("opencode:\n  settings:\n    model: openrouter/test\n")
+    calls = []
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "open_llm_proxy.setup.configure",
+        lambda config, interactive, force: calls.append(config),
+    )
+
+    assert cli.main(["setup", "--non-interactive"]) == 0
+    assert calls == [config_path]
+
+
+def test_config_default_config_uses_xdg_config_home(monkeypatch, tmp_path):
+    config_path = tmp_path / "open-llm-proxy" / "agent-config.yml"
+    config_path.parent.mkdir()
+    config_path.write_text("opencode:\n  settings:\n    model: openrouter/test\n")
+    calls = []
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "open_llm_proxy.config_gen.generate_config",
+        lambda path: calls.append(path) or {},
+    )
+
+    assert cli.main(["config", "--format", "json"]) == 0
+    assert calls == [str(config_path)]
 
 
 def test_models_lists_filtered_provider_catalog(monkeypatch, capsys):
@@ -175,9 +201,7 @@ def test_models_reports_catalog_failure(monkeypatch, capsys):
     )
 
     assert cli.main(["models", "missing-provider"]) == 2
-    assert capsys.readouterr().err == (
-        "Error: model discovery failed: Unknown provider\n"
-    )
+    assert capsys.readouterr().err == ("Error: model discovery failed: Unknown provider\n")
 
 
 def test_auth_all_ok(monkeypatch, capsys):
@@ -203,8 +227,13 @@ def test_auth_all_ok(monkeypatch, capsys):
 
 def test_auth_openrouter_piped(monkeypatch, capsys):
     import io
+
     or_ok = [False]
-    monkeypatch.setattr(cli, "_check_openrouter", lambda: (or_ok[0], "missing" if not or_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(
+        cli,
+        "_check_openrouter",
+        lambda: (or_ok[0], "missing" if not or_ok[0] else "credential discoverable"),
+    )
     monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
@@ -212,7 +241,12 @@ def test_auth_openrouter_piped(monkeypatch, capsys):
 
     saved_keys = []
     import open_llm_proxy.openrouter_creds
-    monkeypatch.setattr(open_llm_proxy.openrouter_creds, "save_api_key", lambda key: (saved_keys.append(key), or_ok.__setitem__(0, True))[0])
+
+    monkeypatch.setattr(
+        open_llm_proxy.openrouter_creds,
+        "save_api_key",
+        lambda key: (saved_keys.append(key), or_ok.__setitem__(0, True))[0],
+    )
 
     fake_stdin = io.StringIO("piped_secret_key\n")
     monkeypatch.setattr(cli.sys, "stdin", fake_stdin)
@@ -228,7 +262,11 @@ def test_auth_openrouter_piped(monkeypatch, capsys):
 def test_auth_openrouter_tty(monkeypatch, capsys):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     or_ok = [False]
-    monkeypatch.setattr(cli, "_check_openrouter", lambda: (or_ok[0], "missing" if not or_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(
+        cli,
+        "_check_openrouter",
+        lambda: (or_ok[0], "missing" if not or_ok[0] else "credential discoverable"),
+    )
     monkeypatch.setattr(cli, "_check_opencode", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_github_copilot", lambda: (True, "credential discoverable"))
     monkeypatch.setattr(cli, "_check_claude_cli", lambda: (True, "credential discoverable"))
@@ -236,12 +274,17 @@ def test_auth_openrouter_tty(monkeypatch, capsys):
 
     saved_keys = []
     import open_llm_proxy.openrouter_creds
+
     monkeypatch.setattr(
         open_llm_proxy.openrouter_creds,
         "get_api_key",
         lambda: (_ for _ in ()).throw(RuntimeError("missing")),
     )
-    monkeypatch.setattr(open_llm_proxy.openrouter_creds, "save_api_key", lambda key: (saved_keys.append(key), or_ok.__setitem__(0, True))[0])
+    monkeypatch.setattr(
+        open_llm_proxy.openrouter_creds,
+        "save_api_key",
+        lambda key: (saved_keys.append(key), or_ok.__setitem__(0, True))[0],
+    )
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("getpass.getpass", lambda prompt: "tty_secret_key")
 
@@ -254,6 +297,7 @@ def test_auth_openrouter_tty(monkeypatch, capsys):
 
 def test_auth_openrouter_empty(monkeypatch, capsys):
     import io
+
     monkeypatch.setattr(cli, "_check_openrouter", lambda: (False, "missing"))
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
     monkeypatch.setattr(cli.sys, "stdin", io.StringIO("   \n"))
@@ -276,9 +320,14 @@ def test_auth_opencode_login(monkeypatch, capsys):
     _stub_all_check_ok(monkeypatch)
 
     op_ok = [False]
-    monkeypatch.setattr(cli, "_check_opencode", lambda: (op_ok[0], "missing" if not op_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(
+        cli,
+        "_check_opencode",
+        lambda: (op_ok[0], "missing" if not op_ok[0] else "credential discoverable"),
+    )
 
     sub_calls = []
+
     def mock_run(cmd, **kwargs):
         sub_calls.append(cmd)
         op_ok[0] = True
@@ -338,9 +387,14 @@ def test_auth_github_copilot_login(monkeypatch, capsys):
     _stub_all_check_ok(monkeypatch)
 
     cop_ok = [False]
-    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (cop_ok[0], "missing" if not cop_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(
+        cli,
+        "_check_github_copilot",
+        lambda: (cop_ok[0], "missing" if not cop_ok[0] else "credential discoverable"),
+    )
 
     sub_calls = []
+
     def mock_run(cmd, **kwargs):
         sub_calls.append(cmd)
         cop_ok[0] = True
@@ -369,9 +423,14 @@ def test_auth_claude_cli_login(monkeypatch, capsys):
     _stub_all_check_ok(monkeypatch)
 
     cl_ok = [False]
-    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (cl_ok[0], "missing" if not cl_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(
+        cli,
+        "_check_claude_cli",
+        lambda: (cl_ok[0], "missing" if not cl_ok[0] else "credential discoverable"),
+    )
 
     sub_calls = []
+
     def mock_run(cmd, **kwargs):
         sub_calls.append(cmd)
         cl_ok[0] = True
@@ -387,6 +446,7 @@ def test_auth_claude_cli_login(monkeypatch, capsys):
 
 def test_auth_check_command(monkeypatch, capsys):
     from open_llm_proxy import connectivity
+
     checked_providers = []
     results = {
         "openrouter": (True, "Ready"),
@@ -395,6 +455,7 @@ def test_auth_check_command(monkeypatch, capsys):
         "claude-cli": (True, "Ready"),
         "nvidia": (True, "Ready"),
     }
+
     def mock_check(p):
         checked_providers.append(p)
         return results[p]
@@ -411,7 +472,10 @@ def test_auth_check_command(monkeypatch, capsys):
 def test_auth_set_command(monkeypatch, capsys):
     saved = []
     import open_llm_proxy.openrouter_creds
-    monkeypatch.setattr(open_llm_proxy.openrouter_creds, "save_api_key", lambda key: saved.append(key))
+
+    monkeypatch.setattr(
+        open_llm_proxy.openrouter_creds, "save_api_key", lambda key: saved.append(key)
+    )
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("getpass.getpass", lambda prompt: "manual_set_key")
 
@@ -422,9 +486,14 @@ def test_auth_set_command(monkeypatch, capsys):
 
 def test_auth_set_opencode(monkeypatch, capsys):
     op_ok = [False]
-    monkeypatch.setattr(cli, "_check_opencode", lambda: (op_ok[0], "missing" if not op_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(
+        cli,
+        "_check_opencode",
+        lambda: (op_ok[0], "missing" if not op_ok[0] else "credential discoverable"),
+    )
 
     sub_calls = []
+
     def mock_run(cmd, **kwargs):
         sub_calls.append(cmd)
         op_ok[0] = True
@@ -438,9 +507,14 @@ def test_auth_set_opencode(monkeypatch, capsys):
 
 def test_auth_set_github_copilot(monkeypatch, capsys):
     cop_ok = [False]
-    monkeypatch.setattr(cli, "_check_github_copilot", lambda: (cop_ok[0], "missing" if not cop_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(
+        cli,
+        "_check_github_copilot",
+        lambda: (cop_ok[0], "missing" if not cop_ok[0] else "credential discoverable"),
+    )
 
     sub_calls = []
+
     def mock_run(cmd, **kwargs):
         sub_calls.append(cmd)
         cop_ok[0] = True
@@ -465,9 +539,14 @@ def test_auth_set_github_copilot(monkeypatch, capsys):
 
 def test_auth_set_claude_cli(monkeypatch, capsys):
     cl_ok = [False]
-    monkeypatch.setattr(cli, "_check_claude_cli", lambda: (cl_ok[0], "missing" if not cl_ok[0] else "credential discoverable"))
+    monkeypatch.setattr(
+        cli,
+        "_check_claude_cli",
+        lambda: (cl_ok[0], "missing" if not cl_ok[0] else "credential discoverable"),
+    )
 
     sub_calls = []
+
     def mock_run(cmd, **kwargs):
         sub_calls.append(cmd)
         cl_ok[0] = True

@@ -7,15 +7,15 @@ services:
     container_name: open-llm-proxy-postgres
     restart: always
     environment:
-      POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: litellm
-      POSTGRES_DB: litellm
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - open-llm-proxy-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10

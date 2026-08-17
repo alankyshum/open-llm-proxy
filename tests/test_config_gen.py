@@ -1,10 +1,12 @@
-import pytest
 from pathlib import Path
+
+import pytest
+
 from open_llm_proxy.config_gen import (
     configured_model_tokens,
-    parse_fallback_chain,
-    map_token_to_deployment_params,
     generate_config,
+    map_token_to_deployment_params,
+    parse_fallback_chain,
 )
 
 
@@ -27,11 +29,16 @@ opencode:
         "openrouter/z-ai/glm-5.2",
     }
 
+
 def test_parse_fallback_chain_success():
     # dual prefix acceptance -> no longer dual prefix, open-llm-proxy only
     c1 = "open-llm-proxy/[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
     tokens1 = parse_fallback_chain(c1)
-    assert tokens1 == ["claude-cli/claude-sonnet-5", "github-copilot/claude-sonnet-5", "openrouter/z-ai/glm-5.2"]
+    assert tokens1 == [
+        "claude-cli/claude-sonnet-5",
+        "github-copilot/claude-sonnet-5",
+        "openrouter/z-ai/glm-5.2",
+    ]
 
     c2 = "open-llm-proxy/[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5]"
     tokens2 = parse_fallback_chain(c2)
@@ -47,16 +54,18 @@ def test_parse_fallback_chain_success():
     tokens4 = parse_fallback_chain(c4)
     assert tokens4 == ["github-copilot/gpt-5-mini"]
 
+
 def test_parse_fallback_chain_failures():
     with pytest.raises(ValueError):
-        parse_fallback_chain("[claude-cli/claude-sonnet-5") # unclosed
+        parse_fallback_chain("[claude-cli/claude-sonnet-5")  # unclosed
     with pytest.raises(ValueError):
-        parse_fallback_chain("[]") # empty
+        parse_fallback_chain("[]")  # empty
     with pytest.raises(ValueError):
-        parse_fallback_chain("[claude-cli]") # missing slash
+        parse_fallback_chain("[claude-cli]")  # missing slash
+
 
 def test_map_token_to_deployment_params(monkeypatch):
-    monkeypatch.setenv("OPENCODE_API_KEY", "sk-opencode-mock-key")
+    monkeypatch.setenv("OPENCODE_API_KEY", "DUMMY-NOT-A-SECRET-opencode-key")
     # google gemini prefix mapping
     params_google = map_token_to_deployment_params("google/models/gemini-2.5-flash")
     assert params_google["model"] == "gemini/gemini-2.5-flash"
@@ -100,6 +109,7 @@ def test_map_token_to_deployment_params(monkeypatch):
     assert params_openrouter["api_key"] == "os.environ/OPENROUTER_API_KEY"
     assert __import__("os").environ["OPENROUTER_API_KEY"] == "sk-or-persisted"
 
+
 def test_generate_config_real(tmp_path):
     # Create a dummy agent-config.yml
     dummy_yaml = """
@@ -120,7 +130,7 @@ opencode:
     config_file.write_text(dummy_yaml)
 
     config_dict = generate_config(str(config_file))
-    
+
     assert "model_list" in config_dict
     assert "fallbacks" not in config_dict
     assert "litellm_settings" in config_dict
@@ -138,7 +148,9 @@ opencode:
     assert fallbacks_l == fallbacks_r
 
     # Verify chain-string alias is registered (semicolon-separated internal representation)
-    chain_alias = "[claude-cli/claude-sonnet-5;github-copilot/claude-sonnet-5;openrouter/z-ai/glm-5.2]"
+    chain_alias = (
+        "[claude-cli/claude-sonnet-5;github-copilot/claude-sonnet-5;openrouter/z-ai/glm-5.2]"
+    )
     chain_deployments = [d for d in model_list if d["model_name"] == chain_alias]
     assert [d["litellm_params"]["model"] for d in chain_deployments] == [
         "claude-cli/claude-sonnet-5",
@@ -167,7 +179,7 @@ opencode:
 
     # Verify small_model is registered as plain deployment/alias
     assert any(d["model_name"] == "github-copilot/gpt-5-mini" for d in model_list)
-    
+
     # Verify router_settings
     assert router_settings["routing_strategy"] == "simple-shuffle"
     assert router_settings["num_retries"] == 0
@@ -188,7 +200,9 @@ opencode:
       model: "open-llm-proxy/[claude-cli/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
 """
     )
-    model_names = {deployment["model_name"] for deployment in generate_config(str(config_file))["model_list"]}
+    model_names = {
+        deployment["model_name"] for deployment in generate_config(str(config_file))["model_list"]
+    }
     assert "[github-copilot/gpt-5.6-luna;github-copilot/gpt-5.6-terra]" in model_names
     assert "[claude-cli/claude-sonnet-5;openrouter/z-ai/glm-5.2]" in model_names
 
@@ -199,6 +213,7 @@ def test_empty_agent_mapping_raises_value_error(tmp_path, agents):
     config_file.write_text("opencode:\n  agents: " + ("{}" if agents == {} else "null") + "\n")
     with pytest.raises(ValueError, match="no model strings"):
         generate_config(str(config_file))
+
 
 def test_parse_fallback_chain_with_account():
     # Single token with @account
@@ -267,7 +282,9 @@ opencode:
 """
     config_file = tmp_path / "agent-config.yml"
     config_file.write_text(dummy_yaml)
-    config_dict = __import__("open_llm_proxy.config_gen", fromlist=[""]).generate_config(str(config_file))
+    config_dict = __import__("open_llm_proxy.config_gen", fromlist=[""]).generate_config(
+        str(config_file)
+    )
 
     model_list = config_dict["model_list"]
     fallbacks_l = config_dict["litellm_settings"]["fallbacks"]
@@ -275,9 +292,7 @@ opencode:
     assert fallbacks_l == fallbacks_r
 
     # Chain alias uses ;-separated internal form, @ preserved
-    chain_alias = (
-        "[claude-cli@work/claude-opus-4-8;claude-cli@home/claude-opus-4-8;github-copilot/claude-opus-4.8]"
-    )
+    chain_alias = "[claude-cli@work/claude-opus-4-8;claude-cli@home/claude-opus-4-8;github-copilot/claude-opus-4.8]"
     chain_deployments = [d for d in model_list if d["model_name"] == chain_alias]
     assert len(chain_deployments) == 3
     # Order 1: @work
@@ -342,8 +357,10 @@ class TestMapTokenWithStoredAccount:
         from open_llm_proxy import account_registry
 
         account_registry.add_account(
-            "openrouter", "work",
-            storage="api-key", secret_bytes=b"sk-or-work-secret",
+            "openrouter",
+            "work",
+            storage="api-key",
+            secret_bytes=b"sk-or-work-secret",
         )
         params = map_token_to_deployment_params("openrouter@work/z-ai/glm-5.2")
         assert params["model"] == "openrouter/z-ai/glm-5.2"
@@ -354,7 +371,10 @@ class TestMapTokenWithStoredAccount:
         from open_llm_proxy import account_registry
 
         account_registry.add_account(
-            "openrouter", "default", storage="env-line", ref="OPENROUTER_API_KEY",
+            "openrouter",
+            "default",
+            storage="env-line",
+            ref="OPENROUTER_API_KEY",
         )
         monkeypatch.setattr(
             "open_llm_proxy.openrouter_creds.get_persisted_api_key",
@@ -374,8 +394,10 @@ class TestMapTokenWithStoredAccount:
         from open_llm_proxy import account_registry
 
         account_registry.add_account(
-            "nvidia", "work",
-            storage="api-key", secret_bytes=b"nv-work-secret",
+            "nvidia",
+            "work",
+            storage="api-key",
+            secret_bytes=b"nv-work-secret",
         )
         params = map_token_to_deployment_params("nvidia_nim@work/nvidia/nemotron-4")
         assert params["model"] == "nvidia_nim/nvidia/nemotron-4"

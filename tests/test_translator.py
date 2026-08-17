@@ -67,7 +67,7 @@ def test_thinking_level_budget_and_temperature():
 def test_model_catalog_entries_present():
     models = translator.build_models_list()
     ids = {m["id"] for m in models}
-    
+
     # Assert standard canonical models are present
     assert "claude-sonnet-5" in ids
     assert "claude-opus-4-8" in ids
@@ -81,8 +81,18 @@ def test_model_catalog_entries_present():
 def test_tool_result_without_tool_use_id_raises_translation_error():
     messages = [
         {"role": "user", "content": "run command"},
-        {"role": "assistant", "content": "", "tool_calls": [{"id": "call_123", "type": "function", "function": {"name": "bash", "arguments": '{"command":"ls"}'}}]},
-        {"role": "tool", "content": "file1.txt"}  # missing tool_call_id!
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": '{"command":"ls"}'},
+                }
+            ],
+        },
+        {"role": "tool", "content": "file1.txt"},  # missing tool_call_id!
     ]
     with pytest.raises(TranslationError) as exc_info:
         translator.openai_messages_to_anthropic(messages)
@@ -96,10 +106,10 @@ def test_basic_round_trip():
         {"role": "assistant", "content": "I am Claude."},
     ]
     system_blocks, anth_msgs = translator.openai_messages_to_anthropic(messages)
-    
+
     assert len(system_blocks) == 1
     assert system_blocks[0]["text"] == "System prompt"
-    
+
     assert len(anth_msgs) == 2
     assert anth_msgs[0]["role"] == "user"
     assert anth_msgs[0]["content"] == [{"type": "text", "text": "Who are you?"}]

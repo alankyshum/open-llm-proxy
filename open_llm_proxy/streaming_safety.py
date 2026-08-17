@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from functools import wraps
 import logging
+from functools import wraps
 from typing import Any
 
 from open_llm_proxy.attribution import (
@@ -9,7 +9,6 @@ from open_llm_proxy.attribution import (
     global_attribution_store,
     served_by_from_data,
 )
-
 
 _SERVED_BY_PREFIX = "[served-by: "
 log = logging.getLogger("open_llm_proxy.streaming_safety")
@@ -114,6 +113,7 @@ def install_pre_first_chunk_fallback_only() -> None:
 
     original = CustomStreamWrapper._handle_stream_fallback_error
     if not getattr(original, "_open_llm_proxy_safe_fallback", False):
+
         @wraps(original)
         def handle_stream_error(self, error):
             if self.sent_first_chunk:
@@ -125,6 +125,7 @@ def install_pre_first_chunk_fallback_only() -> None:
 
     original_chunk_creator = CustomStreamWrapper.chunk_creator
     if not getattr(original_chunk_creator, "_open_llm_proxy_served_by", False):
+
         @wraps(original_chunk_creator)
         def chunk_creator(self, chunk):
             response = original_chunk_creator(self, chunk)

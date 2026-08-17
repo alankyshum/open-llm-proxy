@@ -8,7 +8,8 @@ import random
 import re
 import time
 import uuid
-from typing import Any, AsyncIterator, Iterator, Optional
+from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
 import httpx
 from litellm.llms.custom_llm import CustomLLM, CustomLLMError
@@ -32,7 +33,7 @@ def _redact_429_diagnostic(text: str) -> str:
     return _SENSITIVE_TOKEN_RE.sub("[REDACTED]", text)
 
 
-def _retry_after_seconds(headers: Any) -> Optional[float]:
+def _retry_after_seconds(headers: Any) -> float | None:
     value = headers.get("retry-after") if headers else None
     try:
         return max(0.0, float(value)) if value is not None else None
@@ -43,13 +44,20 @@ def _retry_after_seconds(headers: Any) -> Optional[float]:
 def _log_429_diagnostic(response: Any, model: str, endpoint: str) -> None:
     headers = dict(getattr(response, "headers", {}) or {})
     rate_headers = {
-        key: value for key, value in headers.items()
-        if key.lower().startswith("x-ratelimit-")
+        key: value for key, value in headers.items() if key.lower().startswith("x-ratelimit-")
     }
     request_id = next(
-        (value for key, value in headers.items() if key.lower() in {
-            "x-github-request-id", "x-copilot-request-id", "x-request-id",
-        }), None,
+        (
+            value
+            for key, value in headers.items()
+            if key.lower()
+            in {
+                "x-github-request-id",
+                "x-copilot-request-id",
+                "x-request-id",
+            }
+        ),
+        None,
     )
     try:
         raw_body = response.text
@@ -62,8 +70,13 @@ def _log_429_diagnostic(response: Any, model: str, endpoint: str) -> None:
     log.warning(
         "Copilot 429: status=%s body=%r retry_after=%r rate_headers=%r "
         "service_request_id=%r model=%s endpoint=%s",
-        getattr(response, "status_code", None), body,
-        headers.get("retry-after"), rate_headers, request_id, model, endpoint,
+        getattr(response, "status_code", None),
+        body,
+        headers.get("retry-after"),
+        rate_headers,
+        request_id,
+        model,
+        endpoint,
     )
 
 
@@ -77,7 +90,9 @@ async def _send_with_429_retry(response, req_func, *, model: str, endpoint: str)
             return response
         if hasattr(response, "aclose"):
             await response.aclose()
-        await asyncio.sleep((retry_after or 0.0) + random.uniform(0.01, 0.1))
+        await asyncio.sleep(
+            (retry_after or 0.0) + random.uniform(0.01, 0.1)  # noqa: S311
+        )  # jitter is non-security timing noise, not cryptography
         response = await req_func()
         if response.status_code != 429:
             return response
@@ -180,12 +195,12 @@ def _has_image_part(body: dict[str, Any]) -> bool:
                 for part in c:
                     if isinstance(part, dict) and part.get("type") in ("input_image", "image_url"):
                         return True
-    except Exception:
+    except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
         pass
     return False
 
 
-def _image_url_to_input_image(part: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _image_url_to_input_image(part: dict[str, Any]) -> dict[str, Any] | None:
     """Translate a chat ``image_url`` part into the ``/responses`` ``input_image``.
 
     The Copilot ``/responses`` endpoint rejects ``image_url`` outright::
@@ -199,7 +214,7 @@ def _image_url_to_input_image(part: dict[str, Any]) -> Optional[dict[str, Any]]:
     the original part through untouched.
     """
     value = part.get("image_url")
-    url: Optional[str] = None
+    url: str | None = None
     if isinstance(value, str):
         url = value
     elif isinstance(value, dict):
@@ -239,12 +254,14 @@ def copilot_chat_to_responses(body: dict[str, Any]) -> dict[str, Any]:
             if isinstance(t, dict):
                 if t.get("type") == "function" and "function" in t:
                     f = t["function"]
-                    res_tools.append({
-                        "type": "function",
-                        "name": f.get("name"),
-                        "description": f.get("description"),
-                        "parameters": f.get("parameters"),
-                    })
+                    res_tools.append(
+                        {
+                            "type": "function",
+                            "name": f.get("name"),
+                            "description": f.get("description"),
+                            "parameters": f.get("parameters"),
+                        }
+                    )
                 else:
                     res_tools.append(t)
             else:
@@ -272,27 +289,33 @@ def copilot_chat_to_responses(body: dict[str, Any]) -> dict[str, Any]:
                 continue
             role = m.get("role")
             if role == "tool":
-                input_items.append({
-                    "type": "function_call_output",
-                    "call_id": m.get("tool_call_id"),
-                    "output": m.get("content"),
-                })
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": m.get("tool_call_id"),
+                        "output": m.get("content"),
+                    }
+                )
             elif role == "assistant" and m.get("tool_calls"):
                 if m.get("content"):
-                    input_items.append({
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": m.get("content")}],
-                    })
+                    input_items.append(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": m.get("content")}],
+                        }
+                    )
                 for tc in m["tool_calls"]:
                     f = tc.get("function") or {}
-                    input_items.append({
-                        "type": "function_call",
-                        "call_id": tc.get("id"),
-                        "name": f.get("name"),
-                        "arguments": f.get("arguments"),
-                        "status": tc.get("status") or "completed",
-                    })
+                    input_items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": tc.get("id"),
+                            "name": f.get("name"),
+                            "arguments": f.get("arguments"),
+                            "status": tc.get("status") or "completed",
+                        }
+                    )
             else:
                 content = m.get("content")
                 text_part_type = "output_text" if role == "assistant" else "input_text"
@@ -303,10 +326,12 @@ def copilot_chat_to_responses(body: dict[str, Any]) -> dict[str, Any]:
                     for part in content:
                         if isinstance(part, dict):
                             if part.get("type") == "text":
-                                mapped_content.append({
-                                    "type": text_part_type,
-                                    "text": part.get("text", ""),
-                                })
+                                mapped_content.append(
+                                    {
+                                        "type": text_part_type,
+                                        "text": part.get("text", ""),
+                                    }
+                                )
                             elif part.get("type") == "image_url":
                                 translated = _image_url_to_input_image(part)
                                 mapped_content.append(translated or part)
@@ -366,17 +391,19 @@ def copilot_responses_to_chat(
                     cid = item.get("call_id")
                     name = item.get("name")
                     args = item.get("arguments")
-                    tool_calls.append({
-                        "id": cid,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": args,
-                        },
-                    })
+                    tool_calls.append(
+                        {
+                            "id": cid,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": args,
+                            },
+                        }
+                    )
                     if item.get("status") == "truncated":
                         is_truncated = True
-    except Exception:
+    except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
         pass
 
     text = "".join(text_parts) if text_parts else ("" if not tool_calls else None)
@@ -421,7 +448,9 @@ def copilot_responses_to_chat(
     }
 
 
-def chunk_to_generic(ch: dict[str, Any], is_finished: bool = False, finish_reason: str = "") -> GenericStreamingChunk:
+def chunk_to_generic(
+    ch: dict[str, Any], is_finished: bool = False, finish_reason: str = ""
+) -> GenericStreamingChunk:  # intentional long protocol text or compatibility message
     choices = ch.get("choices", [])
     text = ""
     tool_use = None
@@ -434,7 +463,7 @@ def chunk_to_generic(ch: dict[str, Any], is_finished: bool = False, finish_reaso
         tcalls = delta.get("tool_calls", None)
         if tcalls and len(tcalls) > 0:
             tool_use = tcalls[0]
-    
+
     chunk: GenericStreamingChunk = {
         "text": text,
         "is_finished": is_finished,
@@ -451,7 +480,7 @@ class GithubCopilotLLM(CustomLLM):
     def __init__(self) -> None:
         self._clients_by_loop = {}
         self._client_lock = asyncio.Lock()
-        self._endpoint_cache: Optional[tuple[float, dict[str, str]]] = None
+        self._endpoint_cache: tuple[float, dict[str, str]] | None = None
         self._endpoint_ttl = 300.0
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -459,7 +488,9 @@ class GithubCopilotLLM(CustomLLM):
         if loop not in self._clients_by_loop:
             limits = httpx.Limits(max_keepalive_connections=32, max_connections=64)
             timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0)
-            self._clients_by_loop[loop] = httpx.AsyncClient(limits=limits, timeout=timeout, http2=False)
+            self._clients_by_loop[loop] = httpx.AsyncClient(
+                limits=limits, timeout=timeout, http2=False
+            )  # intentional long protocol text or compatibility message
         return self._clients_by_loop[loop]
 
     @staticmethod
@@ -467,9 +498,9 @@ class GithubCopilotLLM(CustomLLM):
         """Strip github-copilot/ and gh- prefix from model name."""
         s = model
         if s.startswith("github-copilot/"):
-            s = s[len("github-copilot/"):]
+            s = s[len("github-copilot/") :]
         if s.startswith("gh-"):
-            s = s[len("gh-"):]
+            s = s[len("gh-") :]
         return s
 
     async def get_endpoint_for_model(self, model: str) -> str:
@@ -547,7 +578,7 @@ class GithubCopilotLLM(CustomLLM):
             finally:
                 await queue.put((True, None))
 
-        task = loop.create_task(producer())
+        loop.create_task(producer())
 
         while True:
             try:
@@ -576,7 +607,7 @@ class GithubCopilotLLM(CustomLLM):
         except copilot_creds.CopilotAuthError:
             raise  # No status_code → litellm treats as retriable → triggers fallback
         except Exception as e:
-            raise CustomLLMError(status_code=500, message=f"Copilot auth error: {e}")
+            raise CustomLLMError(status_code=500, message=f"Copilot auth error: {e}") from e
 
         endpoint = await self.get_endpoint_for_model(model_str)
 
@@ -619,7 +650,10 @@ class GithubCopilotLLM(CustomLLM):
                     resp = await req_func()
                 if resp.status_code == 429:
                     resp = await _send_with_429_retry(
-                        resp, req_func, model=model_str, endpoint=base_url,
+                        resp,
+                        req_func,
+                        model=model_str,
+                        endpoint=base_url,
                     )
                 if resp.status_code == 429:
                     raise custom_rate_limit_error(
@@ -633,7 +667,7 @@ class GithubCopilotLLM(CustomLLM):
             except CustomLLMError:
                 raise
             except Exception as exc:
-                raise CustomLLMError(status_code=500, message=str(exc))
+                raise CustomLLMError(status_code=500, message=str(exc)) from exc
 
         if endpoint == "/responses":
             # Translate request and treat as non-streaming JSON internally
@@ -641,7 +675,9 @@ class GithubCopilotLLM(CustomLLM):
             headers["Accept"] = "application/json"
 
             async def _send_responses():
-                req = client.build_request("POST", f"{base_url}/responses", json=translated_body, headers=headers)
+                req = client.build_request(
+                    "POST", f"{base_url}/responses", json=translated_body, headers=headers
+                )  # intentional long protocol text or compatibility message
                 return await client.send(req)
 
             resp = await send_with_retry(_send_responses)
@@ -657,7 +693,7 @@ class GithubCopilotLLM(CustomLLM):
             )
 
             choices = chat_dict.get("choices", [])
-            usage = chat_dict.get("usage", {})
+            chat_dict.get("usage", {})
             if choices:
                 choice = choices[0]
                 message = choice.get("message", {})
@@ -666,26 +702,19 @@ class GithubCopilotLLM(CustomLLM):
                 finish_reason = choice.get("finish_reason", "stop")
 
                 if content:
-                    yield chunk_to_generic({
-                        "choices": [{
-                            "index": 0,
-                            "delta": {"content": content}
-                        }]
-                    })
+                    yield chunk_to_generic(
+                        {"choices": [{"index": 0, "delta": {"content": content}}]}
+                    )
                 if tool_calls:
-                    yield chunk_to_generic({
-                        "choices": [{
-                            "index": 0,
-                            "delta": {"tool_calls": tool_calls}
-                        }]
-                    })
+                    yield chunk_to_generic(
+                        {"choices": [{"index": 0, "delta": {"tool_calls": tool_calls}}]}
+                    )
 
-                yield chunk_to_generic({
-                    "choices": [{
-                        "index": 0,
-                        "delta": {}
-                    }]
-                }, is_finished=True, finish_reason=finish_reason)
+                yield chunk_to_generic(
+                    {"choices": [{"index": 0, "delta": {}}]},
+                    is_finished=True,
+                    finish_reason=finish_reason,
+                )
 
         else:
             # /chat/completions true streaming
@@ -693,7 +722,9 @@ class GithubCopilotLLM(CustomLLM):
             headers["Accept"] = "text/event-stream"
 
             async def _send_chat():
-                req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
+                req = client.build_request(
+                    "POST", f"{base_url}/chat/completions", json=body, headers=headers
+                )  # intentional long protocol text or compatibility message
                 return await client.send(req, stream=True)
 
             resp = await send_with_retry(_send_chat)
@@ -704,11 +735,11 @@ class GithubCopilotLLM(CustomLLM):
                     stream_iter = resp.aiter_bytes(chunk_size=1024)
                     async for chunk in stream_iter:
                         if len(err_bytes) + len(chunk) > 4096:
-                            err_bytes += chunk[:4096 - len(err_bytes)]
+                            err_bytes += chunk[: 4096 - len(err_bytes)]
                             is_truncated = True
                             break
                         err_bytes += chunk
-                    
+
                     # Distinguish exact 4096-byte body from >4096 without unbounded reads
                     if len(err_bytes) == 4096 and not is_truncated:
                         try:
@@ -752,7 +783,7 @@ class GithubCopilotLLM(CustomLLM):
                                 is_finished=finish_reason is not None,
                                 finish_reason=finish_reason or "",
                             )
-                        except Exception:
+                        except Exception:  # parsing is best effort  # noqa: S110
                             pass
             finally:
                 await resp.aclose()
@@ -791,7 +822,7 @@ class GithubCopilotLLM(CustomLLM):
         except copilot_creds.CopilotAuthError:
             raise  # No status_code → litellm treats as retriable → triggers fallback
         except Exception as e:
-            raise CustomLLMError(status_code=500, message=f"Copilot auth error: {e}")
+            raise CustomLLMError(status_code=500, message=f"Copilot auth error: {e}") from e
 
         endpoint = await self.get_endpoint_for_model(model_str)
 
@@ -834,7 +865,10 @@ class GithubCopilotLLM(CustomLLM):
                     resp = await req_func()
                 if resp.status_code == 429:
                     resp = await _send_with_429_retry(
-                        resp, req_func, model=model_str, endpoint=base_url,
+                        resp,
+                        req_func,
+                        model=model_str,
+                        endpoint=base_url,
                     )
                 if resp.status_code == 429:
                     raise custom_rate_limit_error(
@@ -848,14 +882,16 @@ class GithubCopilotLLM(CustomLLM):
             except CustomLLMError:
                 raise
             except Exception as exc:
-                raise CustomLLMError(status_code=500, message=str(exc))
+                raise CustomLLMError(status_code=500, message=str(exc)) from exc
 
         if endpoint == "/responses":
             translated_body = copilot_chat_to_responses(body)
             headers["Accept"] = "application/json"
 
             async def _send_responses():
-                req = client.build_request("POST", f"{base_url}/responses", json=translated_body, headers=headers)
+                req = client.build_request(
+                    "POST", f"{base_url}/responses", json=translated_body, headers=headers
+                )  # intentional long protocol text or compatibility message
                 return await client.send(req)
 
             resp = await send_with_retry(_send_responses)
@@ -883,7 +919,9 @@ class GithubCopilotLLM(CustomLLM):
             headers["Accept"] = "application/json"
 
             async def _send_chat():
-                req = client.build_request("POST", f"{base_url}/chat/completions", json=body, headers=headers)
+                req = client.build_request(
+                    "POST", f"{base_url}/chat/completions", json=body, headers=headers
+                )  # intentional long protocol text or compatibility message
                 return await client.send(req)
 
             resp = await send_with_retry(_send_chat)

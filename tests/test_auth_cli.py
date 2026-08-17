@@ -7,7 +7,6 @@ import pytest
 
 from open_llm_proxy import cli
 
-
 # ---- Fixtures -----------------------------------------------------------------
 
 
@@ -22,35 +21,41 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _stub_migration_skipped(monkeypatch):
     """Make all legacy credential getters raise so migration is a no-op."""
-    import open_llm_proxy.openrouter_creds
-    import open_llm_proxy.opencode_creds
     import open_llm_proxy.copilot_creds
     import open_llm_proxy.creds
     import open_llm_proxy.nvidia_creds
+    import open_llm_proxy.opencode_creds
+    import open_llm_proxy.openrouter_creds
 
     def _raise(msg: str):
         def _inner():
             raise RuntimeError(msg)
+
         return _inner
 
     monkeypatch.setattr(
-        open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+        open_llm_proxy.openrouter_creds,
+        "get_persisted_api_key",
         _raise("no cred"),
     )
     monkeypatch.setattr(
-        open_llm_proxy.opencode_creds, "get_opencode_api_key",
+        open_llm_proxy.opencode_creds,
+        "get_opencode_api_key",
         _raise("no cred"),
     )
     monkeypatch.setattr(
-        open_llm_proxy.copilot_creds, "get_oauth_token",
+        open_llm_proxy.copilot_creds,
+        "get_oauth_token",
         _raise("no cred"),
     )
     monkeypatch.setattr(
-        open_llm_proxy.creds, "get_api_key",
+        open_llm_proxy.creds,
+        "get_api_key",
         _raise("no cred"),
     )
     monkeypatch.setattr(
-        open_llm_proxy.nvidia_creds, "get_api_key",
+        open_llm_proxy.nvidia_creds,
+        "get_api_key",
         _raise("no cred"),
     )
 
@@ -58,30 +63,35 @@ def _stub_migration_skipped(monkeypatch):
 def _stub_migration_found_all(monkeypatch):
     """Make all legacy credential getters return a value so migration imports
     every provider as @default."""
-    import open_llm_proxy.openrouter_creds
-    import open_llm_proxy.opencode_creds
     import open_llm_proxy.copilot_creds
     import open_llm_proxy.creds
     import open_llm_proxy.nvidia_creds
+    import open_llm_proxy.opencode_creds
+    import open_llm_proxy.openrouter_creds
 
     monkeypatch.setattr(
-        open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+        open_llm_proxy.openrouter_creds,
+        "get_persisted_api_key",
         lambda: "sk-or-test",
     )
     monkeypatch.setattr(
-        open_llm_proxy.opencode_creds, "get_opencode_api_key",
+        open_llm_proxy.opencode_creds,
+        "get_opencode_api_key",
         lambda: "oc-key-test",
     )
     monkeypatch.setattr(
-        open_llm_proxy.copilot_creds, "get_oauth_token",
+        open_llm_proxy.copilot_creds,
+        "get_oauth_token",
         lambda: "gho_test",
     )
     monkeypatch.setattr(
-        open_llm_proxy.creds, "get_api_key",
+        open_llm_proxy.creds,
+        "get_api_key",
         lambda: "sk-ant-test",
     )
     monkeypatch.setattr(
-        open_llm_proxy.nvidia_creds, "get_api_key",
+        open_llm_proxy.nvidia_creds,
+        "get_api_key",
         lambda: "nv-test",
     )
 
@@ -92,12 +102,14 @@ def _openrouter_with_stdin(monkeypatch, text: str):
 
     # Stub the creds getter used by migration
     monkeypatch.setattr(
-        open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+        open_llm_proxy.openrouter_creds,
+        "get_persisted_api_key",
         lambda: (_ for _ in ()).throw(RuntimeError("no cred")),
     )
     # Stub save_api_key to be a no-op in tests
     monkeypatch.setattr(
-        open_llm_proxy.openrouter_creds, "save_api_key",
+        open_llm_proxy.openrouter_creds,
+        "save_api_key",
         lambda key: None,
     )
     # Fake stdin with the key
@@ -111,11 +123,13 @@ def _openrouter_with_tty(monkeypatch, key: str):
     import open_llm_proxy.openrouter_creds
 
     monkeypatch.setattr(
-        open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+        open_llm_proxy.openrouter_creds,
+        "get_persisted_api_key",
         lambda: (_ for _ in ()).throw(RuntimeError("no cred")),
     )
     monkeypatch.setattr(
-        open_llm_proxy.openrouter_creds, "save_api_key",
+        open_llm_proxy.openrouter_creds,
+        "save_api_key",
         lambda key: None,
     )
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
@@ -155,7 +169,6 @@ class TestAuthAccounts:
     def test_unknown_provider_errors(self, cfg, capsys):
         # auth accounts <provider> uses choices=KNOWN_PROVIDERS, so argparse
         # rejects unknown values before our handler runs (calls sys.exit(2)).
-        import sys as _sys
         with pytest.raises(SystemExit):
             cli.main(["auth", "accounts", "nonexistent"])
 
@@ -221,7 +234,8 @@ class TestAuthAdd:
         import open_llm_proxy.openrouter_creds
 
         monkeypatch.setattr(
-            open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+            open_llm_proxy.openrouter_creds,
+            "get_persisted_api_key",
             lambda: (_ for _ in ()).throw(RuntimeError("no cred")),
         )
         fake_stdin = io.StringIO("   \n")
@@ -312,8 +326,10 @@ class TestAuthUse:
         monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
         # Stub creds.get_api_key so migration for claude-cli is a no-op
         import open_llm_proxy.creds as _orig_creds
+
         monkeypatch.setattr(
-            _orig_creds, "get_api_key",
+            _orig_creds,
+            "get_api_key",
             lambda account=None: (_ for _ in ()).throw(RuntimeError("no cred")),
         )
 
@@ -394,12 +410,14 @@ class TestAuthSet:
         import open_llm_proxy.openrouter_creds
 
         monkeypatch.setattr(
-            open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+            open_llm_proxy.openrouter_creds,
+            "get_persisted_api_key",
             lambda: (_ for _ in ()).throw(RuntimeError("no cred")),
         )
         saved = []
         monkeypatch.setattr(
-            open_llm_proxy.openrouter_creds, "save_api_key",
+            open_llm_proxy.openrouter_creds,
+            "save_api_key",
             lambda key: saved.append(key),
         )
         monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
@@ -419,12 +437,14 @@ class TestAuthSet:
         import open_llm_proxy.openrouter_creds
 
         monkeypatch.setattr(
-            open_llm_proxy.openrouter_creds, "get_persisted_api_key",
+            open_llm_proxy.openrouter_creds,
+            "get_persisted_api_key",
             lambda: (_ for _ in ()).throw(RuntimeError("no cred")),
         )
         saved = []
         monkeypatch.setattr(
-            open_llm_proxy.openrouter_creds, "save_api_key",
+            open_llm_proxy.openrouter_creds,
+            "save_api_key",
             lambda key: saved.append(key),
         )
         fake_stdin = io.StringIO("sk-piped-key\n")
@@ -444,7 +464,8 @@ class TestAuthCheck:
 
         checked = []
         monkeypatch.setattr(
-            connectivity, "check_provider",
+            connectivity,
+            "check_provider",
             lambda p, account=None: (
                 checked.append(p),
                 (True, "Ready"),
@@ -462,7 +483,8 @@ class TestAuthCheck:
 
         checked = []
         monkeypatch.setattr(
-            connectivity, "check_provider",
+            connectivity,
+            "check_provider",
             lambda p, account=None: (
                 checked.append(p),
                 (True, "Ready"),
@@ -481,6 +503,7 @@ class TestAuthAddClaudeCli:
         """auth add claude-cli --name work registers a named account whose
         get_api_key(account='work') resolves to the captured token."""
         import json
+
         from open_llm_proxy import auth_migration
 
         # Stub migration to be a no-op (re-registering is idempotent)
@@ -518,6 +541,7 @@ class TestAuthAddClaudeCli:
 
         # Verify get_api_key(account="work") resolves the captured token
         from open_llm_proxy import creds as _creds_mod
+
         _creds_mod._cached_key_cache.clear()
         _creds_mod._cached_time_cache.clear()
         _creds_mod._in_memory_oauth_cache.clear()
@@ -533,6 +557,7 @@ class TestAuthAddClaudeCli:
         """When the post-login credential can't be captured, the account is
         NOT created and an error is reported."""
         from open_llm_proxy import auth_migration
+
         monkeypatch.setattr(auth_migration, "migrate_legacy_credentials", lambda: [])
 
         monkeypatch.setattr(cli, "_run_claude_cli_login", lambda: 0)
@@ -543,6 +568,7 @@ class TestAuthAddClaudeCli:
 
         # First create the default account
         from open_llm_proxy import account_registry
+
         assert cli.main(["auth", "add", "claude-cli"]) == 0
         capsys.readouterr()
         assert len(account_registry.list_accounts("claude-cli")) == 1
@@ -560,6 +586,7 @@ class TestAuthAddClaudeCli:
     def test_default_claude_add_keeps_external_storage(self, cfg, monkeypatch, capsys):
         """Adding the default (first) claude-cli account uses external storage."""
         from open_llm_proxy import auth_migration
+
         monkeypatch.setattr(auth_migration, "migrate_legacy_credentials", lambda: [])
 
         monkeypatch.setattr(cli, "_run_claude_cli_login", lambda: 0)

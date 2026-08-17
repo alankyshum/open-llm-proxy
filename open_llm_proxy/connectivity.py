@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import httpx
-from typing import Tuple
 
-from open_llm_proxy import openrouter_creds, opencode_creds, creds, anthropic_client, copilot_creds
+import httpx
+
+from open_llm_proxy import anthropic_client, copilot_creds, creds, opencode_creds, openrouter_creds
+
 
 def _run_async(coro):
     try:
@@ -14,12 +15,14 @@ def _run_async(coro):
 
     if loop and loop.is_running():
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             return pool.submit(asyncio.run, coro).result()
     else:
         return asyncio.run(coro)
 
-def check_provider(provider: str, account: str | None = None) -> Tuple[bool, str]:
+
+def check_provider(provider: str, account: str | None = None) -> tuple[bool, str]:
     """
     Perform a synchronous, read-only connectivity probe on a given LLM provider.
     5s timeout, no retries, returns a static status string.
@@ -28,7 +31,7 @@ def check_provider(provider: str, account: str | None = None) -> Tuple[bool, str
     credential is used.
     """
     prov = provider.lower().replace("-", "_").strip()
-    
+
     url = ""
     headers = {}
 
@@ -78,6 +81,7 @@ def check_provider(provider: str, account: str | None = None) -> Tuple[bool, str
             }
         elif prov == "nvidia":
             from open_llm_proxy import nvidia_creds
+
             key = nvidia_creds.get_api_key(account=account)
             if not key:
                 return False, "Missing Credentials"
@@ -95,7 +99,7 @@ def check_provider(provider: str, account: str | None = None) -> Tuple[bool, str
     try:
         with httpx.Client(transport=transport, timeout=5.0) as client:
             resp = client.get(url, headers=headers)
-            
+
             if 200 <= resp.status_code < 300:
                 return True, "Ready"
             elif resp.status_code in (401, 403):

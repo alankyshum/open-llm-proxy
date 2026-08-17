@@ -5,7 +5,6 @@ generation), mode 0600, valid YAML, no raw keys, and no unlink after setup.
 """
 
 import os
-import stat
 from pathlib import Path
 
 import pytest
@@ -15,16 +14,15 @@ from fastapi.testclient import TestClient
 
 from open_llm_proxy.server_launcher import (
     STABLE_CONFIG_BASENAME,
-    _resolve_stable_config_dir,
     register_config_reload_endpoint,
     resolve_stable_config_path,
     write_config_atomic,
 )
 
-
 # ---------------------------------------------------------------------------
 # Deterministic path
 # ---------------------------------------------------------------------------
+
 
 class TestConfigPathResolution:
     def test_default_path_under_config_dir(self):
@@ -140,6 +138,7 @@ class TestAtomicWrite:
 
     def test_temp_files_cleaned_on_error(self, tmp_path):
         """If the write crashes the temp file in the same dir is removed."""
+
         class _ExplodingDict(dict):
             def __iter__(self):
                 raise RuntimeError("boom!")
@@ -158,6 +157,7 @@ class TestAtomicWrite:
 # ---------------------------------------------------------------------------
 # Mode 0600
 # ---------------------------------------------------------------------------
+
 
 class TestMode0600:
     def test_mode_is_0600(self, tmp_path):
@@ -186,6 +186,7 @@ class TestMode0600:
 # No unlink after setup — config persists
 # ---------------------------------------------------------------------------
 
+
 class TestConfigPersistence:
     def test_file_persists_after_write(self, tmp_path):
         """Config file exists after write; no implicit delete."""
@@ -203,7 +204,11 @@ class TestConfigPersistence:
             cfg = {
                 "model_list": [{"model_name": f"gen-{i}", "litellm_params": {"model": "test"}}],
                 "litellm_settings": {"drop_params": True, "fallbacks": []},
-                "router_settings": {"num_retries": 0, "routing_strategy": "simple-shuffle", "fallbacks": []},
+                "router_settings": {
+                    "num_retries": 0,
+                    "routing_strategy": "simple-shuffle",
+                    "fallbacks": [],
+                },
             }
             write_config_atomic(cfg, target)
             assert target.exists(), f"File missing after generation {i}"

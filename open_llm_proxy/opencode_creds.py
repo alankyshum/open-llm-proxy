@@ -22,7 +22,7 @@ def _get_opencode_auth_path() -> Path:
 def get_opencode_api_key() -> str:
     """
     Retrieve the OpenCode API key securely.
-    
+
     Highest priority is the environment variable OPENCODE_API_KEY.
     Fallback is the ~/.local/share/opencode/auth.json file.
     """
@@ -43,7 +43,7 @@ def get_opencode_api_key() -> str:
         raise OpenCodeAuthError(
             f"Failed to read OpenCode auth file at '{path}': Unreadable file. "
             f"{e.__class__.__name__}: {e.strerror or str(e)}"
-        )
+        ) from e
 
     try:
         data = json.loads(content)
@@ -51,7 +51,7 @@ def get_opencode_api_key() -> str:
         raise OpenCodeAuthError(
             f"Failed to parse OpenCode auth file at '{path}': Malformed JSON. "
             f"Please ensure it is valid JSON. {e.__class__.__name__}: {str(e)}"
-        )
+        ) from e
 
     if not isinstance(data, dict):
         raise OpenCodeAuthError(
@@ -67,7 +67,7 @@ def get_opencode_api_key() -> str:
     key = opencode_sec.get("key")
     if not isinstance(key, str) or not key.strip():
         raise OpenCodeAuthError(
-            f"Failed to parse OpenCode auth file at '{path}': Missing or invalid 'key' in 'opencode' section."
+            f"Failed to parse OpenCode auth file at '{path}': Missing or invalid 'key' in 'opencode' section."  # intentional long protocol text or compatibility message  # noqa: E501
         )
 
     return key.strip()

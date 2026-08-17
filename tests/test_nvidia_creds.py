@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import httpx
-import pytest
 from pathlib import Path
 
-from open_llm_proxy import nvidia_creds, env_creds
+import httpx
+import pytest
+
+from open_llm_proxy import env_creds, nvidia_creds
 
 
 @pytest.fixture
@@ -13,6 +14,7 @@ def cfg_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     d = tmp_path / "olp_config"
     d.mkdir()
     monkeypatch.setenv("OLP_CONFIG_DIR", str(d))
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     return d
 
 

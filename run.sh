@@ -14,10 +14,8 @@ if [ -f "$ENV_FILE" ]; then
   done < "$ENV_FILE"
 fi
 
-# Bind to all interfaces by default so the proxy is reachable over Tailscale
-# (e.g. http://alans-mac-mini.tailf77eb2.ts.net:8765). Override with
-# OPEN_LLM_PROXY_HOST=127.0.0.1 to restrict to localhost only.
-OPEN_LLM_PROXY_HOST="${OPEN_LLM_PROXY_HOST:-0.0.0.0}"
+# Localhost is the safe default. Set OPEN_LLM_PROXY_HOST explicitly for remote access.
+OPEN_LLM_PROXY_HOST="${OPEN_LLM_PROXY_HOST:-127.0.0.1}"
 
 echo "================================================================="
 echo "open-llm-proxy — LiteLLM Router-based local proxy"

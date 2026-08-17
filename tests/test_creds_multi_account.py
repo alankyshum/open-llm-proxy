@@ -1,25 +1,19 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import httpx  # ensure httpx is in sys.modules before we patch it
 import pytest
 
 from open_llm_proxy import creds
 from open_llm_proxy.account_registry import (
-    AccountRegistryError,
     add_account,
-    list_accounts,
-    resolve_secret_ref,
 )
 
-
 # ---- Fixtures --------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def clean_cache():
@@ -44,6 +38,7 @@ def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 # ---- account=None still uses legacy ~/.claude/.credentials.json -------------------
 
+
 class TestDefaultAccount:
     def test_default_reads_credentials_file(self, monkeypatch, tmp_path):
         """account=None (or no arg) reads from ~/.claude/.credentials.json with BYPASS_KEYCHAIN=1."""
@@ -59,13 +54,15 @@ class TestDefaultAccount:
         creds_dir.mkdir()
         creds_json = creds_dir / ".credentials.json"
         creds_json.write_text(
-            json.dumps({
-                "claudeAiOauth": {
-                    "accessToken": "sk-ant-oat01-default-token",
-                    "refreshToken": "default-refresh",
-                    "expiresAt": 9999999999999,
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-default-token",
+                        "refreshToken": "default-refresh",
+                        "expiresAt": 9999999999999,
+                    }
                 }
-            }),
+            ),
             encoding="utf-8",
         )
 
@@ -82,16 +79,19 @@ class TestDefaultAccount:
 
 # ---- Named accounts resolve from per-account files -------------------------------
 
+
 class TestNamedAccount:
     def _add_named_account(self, cfg: Path, name: str, access_token: str) -> None:
         """Helper to register a named claude-cli account with OAuth credentials."""
-        creds_data = json.dumps({
-            "claudeAiOauth": {
-                "accessToken": access_token,
-                "refreshToken": f"{name}-refresh-token",
-                "expiresAt": 9999999999999,
+        creds_data = json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": access_token,
+                    "refreshToken": f"{name}-refresh-token",
+                    "expiresAt": 9999999999999,
+                }
             }
-        })
+        )
         add_account("claude-cli", name, storage="claude-oauth", secret_bytes=creds_data.encode())
 
     def test_named_accounts_resolve_different_tokens(self, cfg, monkeypatch):
@@ -121,12 +121,15 @@ class TestNamedAccount:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
 
-        add_account("claude-cli", "rawkey", storage="claude-oauth", secret_bytes=b"sk-ant-raw-key-value")
+        add_account(
+            "claude-cli", "rawkey", storage="claude-oauth", secret_bytes=b"sk-ant-raw-key-value"
+        )
 
         assert creds.get_api_key(account="rawkey") == "sk-ant-raw-key-value"
 
 
 # ---- Refresh writes to correct per-account file -----------------------------------
+
 
 class TestRefresh:
     def test_refresh_named_account_writes_only_its_file(self, cfg, monkeypatch, tmp_path):
@@ -153,7 +156,12 @@ class TestRefresh:
                 "expiresAt": expired_ts,
             }
         }
-        add_account("claude-cli", "work", storage="claude-oauth", secret_bytes=json.dumps(work_creds).encode())
+        add_account(
+            "claude-cli",
+            "work",
+            storage="claude-oauth",
+            secret_bytes=json.dumps(work_creds).encode(),
+        )
 
         # Create account "home" with a valid token (should not be touched)
         home_creds = {
@@ -163,7 +171,12 @@ class TestRefresh:
                 "expiresAt": 9999999999999,
             }
         }
-        add_account("claude-cli", "home", storage="claude-oauth", secret_bytes=json.dumps(home_creds).encode())
+        add_account(
+            "claude-cli",
+            "home",
+            storage="claude-oauth",
+            secret_bytes=json.dumps(home_creds).encode(),
+        )
 
         # Mock httpx.post to return new tokens
         new_access = "sk-ant-oat01-new-access"
@@ -203,6 +216,7 @@ class TestRefresh:
 
 # ---- clear_cache isolation --------------------------------------------------------
 
+
 class TestClearCache:
     def test_clear_cache_isolates_accounts(self, cfg, monkeypatch):
         """clear_cache(account='work') does not affect other accounts' cache."""
@@ -212,13 +226,15 @@ class TestClearCache:
 
         # Register two accounts
         for name, token in [("work", "sk-ant-oat01-work"), ("home", "sk-ant-oat01-home")]:
-            cred_data = json.dumps({
-                "claudeAiOauth": {
-                    "accessToken": token,
-                    "refreshToken": f"{name}-rt",
-                    "expiresAt": 9999999999999,
+            cred_data = json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": token,
+                        "refreshToken": f"{name}-rt",
+                        "expiresAt": 9999999999999,
+                    }
                 }
-            })
+            )
             add_account("claude-cli", name, storage="claude-oauth", secret_bytes=cred_data.encode())
 
         # Populate caches
@@ -239,10 +255,18 @@ class TestClearCache:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
 
-        cred_data = json.dumps({
-            "claudeAiOauth": {"accessToken": "sk-ant-oat01-named", "refreshToken": "rt", "expiresAt": 9999999999999}
-        })
-        add_account("claude-cli", "myaccount", storage="claude-oauth", secret_bytes=cred_data.encode())
+        cred_data = json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat01-named",
+                    "refreshToken": "rt",
+                    "expiresAt": 9999999999999,
+                }
+            }
+        )
+        add_account(
+            "claude-cli", "myaccount", storage="claude-oauth", secret_bytes=cred_data.encode()
+        )
 
         assert creds.get_api_key(account="myaccount") == "sk-ant-oat01-named"
         creds.clear_cache()
@@ -262,13 +286,15 @@ class TestActiveAccountResolution:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
 
-        cred_data = json.dumps({
-            "claudeAiOauth": {
-                "accessToken": "sk-ant-oat01-active-work",
-                "refreshToken": "work-rt",
-                "expiresAt": 9999999999999,
+        cred_data = json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat01-active-work",
+                    "refreshToken": "work-rt",
+                    "expiresAt": 9999999999999,
+                }
             }
-        })
+        )
         add_account("claude-cli", "work", storage="claude-oauth", secret_bytes=cred_data.encode())
         from open_llm_proxy import account_registry as ar
 
@@ -288,15 +314,20 @@ class TestActiveAccountResolution:
         assert creds._cached_key_cache.get(creds._DEFAULT) is not None
 
         # Create a named account and set it active
-        cred_data = json.dumps({
-            "claudeAiOauth": {
-                "accessToken": "sk-ant-oat01-switched",
-                "refreshToken": "switched-rt",
-                "expiresAt": 9999999999999,
+        cred_data = json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat01-switched",
+                    "refreshToken": "switched-rt",
+                    "expiresAt": 9999999999999,
+                }
             }
-        })
-        add_account("claude-cli", "switch-acct", storage="claude-oauth", secret_bytes=cred_data.encode())
+        )
+        add_account(
+            "claude-cli", "switch-acct", storage="claude-oauth", secret_bytes=cred_data.encode()
+        )
         from open_llm_proxy import account_registry
+
         account_registry.set_active("claude-cli", "switch-acct")
 
         # account=None should return the named token — NOT the stale default
@@ -342,8 +373,12 @@ class TestRefreshAtomicWrite:
                 "expiresAt": expired_ts,
             }
         }
-        add_account("claude-cli", "work", storage="claude-oauth",
-                    secret_bytes=json.dumps(work_creds).encode())
+        add_account(
+            "claude-cli",
+            "work",
+            storage="claude-oauth",
+            secret_bytes=json.dumps(work_creds).encode(),
+        )
 
         def mock_post(url, **kwargs):
             mock_resp = MagicMock()

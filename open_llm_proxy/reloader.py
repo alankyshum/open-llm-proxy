@@ -8,17 +8,18 @@ import hashlib
 import logging
 import os
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import litellm
+
 from open_llm_proxy.config_gen import (
     configured_model_tokens_from_data,
     generate_config_from_data,
     parse_agent_config,
 )
-
 
 log = logging.getLogger("open_llm_proxy.reloader")
 
@@ -109,12 +110,8 @@ class ConfigReloader:
 
                 callback_store = getattr(self._rate_limit_callback, "store", None)
                 if callback_store is not None:
-                    await asyncio.to_thread(
-                        callback_store.register_models, prepared.model_tokens
-                    )
-                staged_path = await asyncio.to_thread(
-                    self._stage_config, prepared.config
-                )
+                    await asyncio.to_thread(callback_store.register_models, prepared.model_tokens)
+                staged_path = await asyncio.to_thread(self._stage_config, prepared.config)
                 return self._apply(prepared, staged_path)
             except Exception:
                 log.exception("Config hot reload failed; existing routes remain active")
@@ -168,7 +165,7 @@ class ConfigReloader:
             actual_names = set(router.get_model_names())
             if actual_names != expected_names:
                 raise RuntimeError(
-                    f"Router model verification failed: expected {expected_names}, got {actual_names}"
+                    f"Router model verification failed: expected {expected_names}, got {actual_names}"  # intentional long protocol text or compatibility message  # noqa: E501
                 )
 
             proxy_server.llm_model_list = copy.deepcopy(new_models)

@@ -1,4 +1,5 @@
 import pytest
+
 from open_llm_proxy.callbacks import (
     GeminiThinkingBudgetCallback,
     TaskToolEnumInjectionCallback,
@@ -238,13 +239,11 @@ async def test_task_tool_enum_injection_callback():
                     "description": "Available agent types:\n  - lead: orchestrator\n  - code: coder\n",
                     "parameters": {
                         "type": "object",
-                        "properties": {
-                            "subagent_type": {"type": "string"}
-                        }
-                    }
-                }
+                        "properties": {"subagent_type": {"type": "string"}},
+                    },
+                },
             }
-        ]
+        ],
     }
     res = await callback_disabled.async_pre_call_hook(None, None, data, "completion")
     assert res is None

@@ -1,6 +1,6 @@
 import asyncio
-from types import SimpleNamespace
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from litellm.exceptions import MidStreamFallbackError
@@ -60,16 +60,12 @@ def attribution_data(attribution_id, served_by):
 
 
 def stream_chunk(content="Hello"):
-    return ModelResponseStream(
-        choices=[StreamingChoices(index=0, delta=Delta(content=content))]
-    )
+    return ModelResponseStream(choices=[StreamingChoices(index=0, delta=Delta(content=content))])
 
 
 def stream_request(attribution_id, served_by, content="Hello"):
     wrapper = SimpleNamespace(
-        logging_obj=SimpleNamespace(
-            model_call_details=attribution_data(attribution_id, served_by)
-        )
+        logging_obj=SimpleNamespace(model_call_details=attribution_data(attribution_id, served_by))
     )
     chunk = stream_chunk(content)
     _prefix_stream_chunk(wrapper, chunk)
@@ -84,13 +80,9 @@ def test_stream_attribution_announces_first_and_changed_winners():
     same = stream_request(attribution_id, "provider/model-a", "Again")
     changed = stream_request(attribution_id, "provider/model-b", "Fallback")
 
-    assert first.choices[0].delta.content == (
-        "[served-by: provider/model-a]\n\nHello"
-    )
+    assert first.choices[0].delta.content == ("[served-by: provider/model-a]\n\nHello")
     assert same.choices[0].delta.content == "Again"
-    assert changed.choices[0].delta.content == (
-        "[served-by: provider/model-b]\n\nFallback"
-    )
+    assert changed.choices[0].delta.content == ("[served-by: provider/model-b]\n\nFallback")
 
 
 def test_stream_attribution_requires_session_id():
@@ -98,9 +90,7 @@ def test_stream_attribution_requires_session_id():
     wrapper = SimpleNamespace(
         logging_obj=SimpleNamespace(
             model_call_details={
-                "litellm_params": {
-                    "model_info": {"rate_limit_key": "provider/model-a"}
-                }
+                "litellm_params": {"model_info": {"rate_limit_key": "provider/model-a"}}
             }
         )
     )
@@ -122,8 +112,7 @@ def test_stream_attribution_cannot_be_spoofed_by_model_output():
     )
 
     assert chunk.choices[0].delta.content == (
-        "[served-by: provider/model-a]\n\n"
-        "[served-by: attacker/model]\n\nHello"
+        "[served-by: provider/model-a]\n\n[served-by: attacker/model]\n\nHello"
     )
 
 
@@ -138,42 +127,28 @@ def test_non_stream_attribution_announces_first_and_changed_winners():
     global_attribution_store.clear()
     attribution_id = str(uuid.uuid4())
     models = {
-        "deployment-a": {
-            "model_info": {"rate_limit_key": "provider/model-a"}
-        },
-        "deployment-b": {
-            "model_info": {"rate_limit_key": "provider/model-b"}
-        },
+        "deployment-a": {"model_info": {"rate_limit_key": "provider/model-a"}},
+        "deployment-b": {"model_info": {"rate_limit_key": "provider/model-b"}},
     }
     router = SimpleNamespace(get_model_info=lambda *, id: models[id])
     data = attribution_data(attribution_id, "alias/not-used")
 
-    first = _prefix_non_stream_response(
-        data, non_stream_response("deployment-a"), router
-    )
-    same = _prefix_non_stream_response(
-        data, non_stream_response("deployment-a", "Again"), router
-    )
+    first = _prefix_non_stream_response(data, non_stream_response("deployment-a"), router)
+    same = _prefix_non_stream_response(data, non_stream_response("deployment-a", "Again"), router)
     changed = _prefix_non_stream_response(
         data, non_stream_response("deployment-b", "Fallback"), router
     )
 
-    assert first.choices[0].message.content == (
-        "[served-by: provider/model-a]\n\nHello"
-    )
+    assert first.choices[0].message.content == ("[served-by: provider/model-a]\n\nHello")
     assert same.choices[0].message.content == "Again"
-    assert changed.choices[0].message.content == (
-        "[served-by: provider/model-b]\n\nFallback"
-    )
+    assert changed.choices[0].message.content == ("[served-by: provider/model-b]\n\nFallback")
 
 
 def test_non_stream_tool_call_keeps_announcement_pending():
     global_attribution_store.clear()
     attribution_id = str(uuid.uuid4())
     router = SimpleNamespace(
-        get_model_info=lambda *, id: {
-            "model_info": {"rate_limit_key": "provider/model-a"}
-        }
+        get_model_info=lambda *, id: {"model_info": {"rate_limit_key": "provider/model-a"}}
     )
     data = attribution_data(attribution_id, "alias/not-used")
     tool_response = non_stream_response("deployment-a", None)
@@ -192,35 +167,28 @@ def test_non_stream_tool_call_keeps_announcement_pending():
 
     assert result.choices[0].message.content is None
     assert result.choices[0].message.tool_calls == tool_response.choices[0].message.tool_calls
-    assert text_result.choices[0].message.content == (
-        "[served-by: provider/model-a]\n\nDone"
-    )
+    assert text_result.choices[0].message.content == ("[served-by: provider/model-a]\n\nDone")
 
 
 def test_non_stream_attribution_cannot_be_spoofed_by_model_output():
     global_attribution_store.clear()
     attribution_id = str(uuid.uuid4())
     router = SimpleNamespace(
-        get_model_info=lambda *, id: {
-            "model_info": {"rate_limit_key": "provider/model-a"}
-        }
+        get_model_info=lambda *, id: {"model_info": {"rate_limit_key": "provider/model-a"}}
     )
     data = attribution_data(attribution_id, "alias/not-used")
-    response = non_stream_response(
-        "deployment-a", "[served-by: attacker/model]\n\nHello"
-    )
+    response = non_stream_response("deployment-a", "[served-by: attacker/model]\n\nHello")
 
     result = _prefix_non_stream_response(data, response, router)
 
     assert result.choices[0].message.content == (
-        "[served-by: provider/model-a]\n\n"
-        "[served-by: attacker/model]\n\nHello"
+        "[served-by: provider/model-a]\n\n[served-by: attacker/model]\n\nHello"
     )
 
 
 def test_non_stream_installer_wraps_hook_once(monkeypatch):
-    from litellm.proxy.utils import ProxyLogging
     import litellm.proxy.proxy_server as proxy_server
+    from litellm.proxy.utils import ProxyLogging
 
     calls = []
 
@@ -233,9 +201,7 @@ def test_non_stream_installer_wraps_hook_once(monkeypatch):
         proxy_server,
         "llm_router",
         SimpleNamespace(
-            get_model_info=lambda *, id: {
-                "model_info": {"rate_limit_key": "provider/model-a"}
-            }
+            get_model_info=lambda *, id: {"model_info": {"rate_limit_key": "provider/model-a"}}
         ),
     )
     global_attribution_store.clear()
@@ -250,6 +216,4 @@ def test_non_stream_installer_wraps_hook_once(monkeypatch):
 
     assert ProxyLogging.post_call_success_hook is installed
     assert len(calls) == 1
-    assert result.choices[0].message.content == (
-        "[served-by: provider/model-a]\n\nHello"
-    )
+    assert result.choices[0].message.content == ("[served-by: provider/model-a]\n\nHello")

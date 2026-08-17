@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -12,17 +12,20 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlsplit
 
 import httpx
+
+from open_llm_proxy.config_paths import resolve_config_dir
 
 log = logging.getLogger("open_llm_proxy.copilot_creds")
 
 COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 _KEYCHAIN_SERVICE = "GitHub Copilot Proxy"
+
+
 def get_fallback_path() -> Path:
-    return Path.home() / ".config" / "open-llm-proxy" / "copilot.json"
+    return resolve_config_dir() / "copilot.json"
 
 
 _COPILOT_USER_URL = "https://api.github.com/copilot_internal/user"
@@ -39,7 +42,7 @@ class CopilotAuthError(RuntimeError):
     """No usable Copilot credential available."""
 
 
-_oauth_token_cache: Optional[str] = None
+_oauth_token_cache: str | None = None
 _oauth_token_lock = threading.Lock()
 
 
@@ -49,13 +52,22 @@ def clear_oauth_cache() -> None:
         _oauth_token_cache = None
 
 
-def _read_keychain_macos() -> Optional[str]:
+def _read_keychain_macos() -> str | None:
     try:
         user = os.environ.get("USER") or ""
-        out = subprocess.run(
-            ["security", "find-generic-password",
-             "-s", _KEYCHAIN_SERVICE, "-a", user, "-w"],
-            capture_output=True, text=True, timeout=5,
+        out = subprocess.run(  # fixed executable  # noqa: S603
+            [  # fixed executable  # noqa: S607
+                "security",
+                "find-generic-password",
+                "-s",
+                _KEYCHAIN_SERVICE,
+                "-a",
+                user,
+                "-w",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if out.returncode == 0:
             tok = out.stdout.strip()
@@ -65,15 +77,23 @@ def _read_keychain_macos() -> Optional[str]:
     return None
 
 
-def _read_secret_tool_linux() -> Optional[str]:
+def _read_secret_tool_linux() -> str | None:
     if not shutil.which("secret-tool"):
         return None
     try:
         user = os.environ.get("USER") or ""
-        out = subprocess.run(
-            ["secret-tool", "lookup",
-             "service", _KEYCHAIN_SERVICE, "account", user],
-            capture_output=True, text=True, timeout=5,
+        out = subprocess.run(  # fixed executable  # noqa: S603
+            [  # fixed executable  # noqa: S607
+                "secret-tool",
+                "lookup",
+                "service",
+                _KEYCHAIN_SERVICE,
+                "account",
+                user,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if out.returncode == 0:
             tok = out.stdout.strip()
@@ -83,7 +103,7 @@ def _read_secret_tool_linux() -> Optional[str]:
     return None
 
 
-def _read_fallback_file() -> Optional[str]:
+def _read_fallback_file() -> str | None:
     path = get_fallback_path()
     if not path.is_file():
         return None
@@ -132,7 +152,7 @@ def _get_opencode_auth_path() -> Path:
     return Path.home() / ".local" / "share" / "opencode" / "auth.json"
 
 
-def _read_opencode_auth_data() -> Optional[dict]:
+def _read_opencode_auth_data() -> dict | None:
     path = _get_opencode_auth_path()
     if not path.is_file():
         return None
@@ -143,12 +163,12 @@ def _read_opencode_auth_data() -> Optional[dict]:
         copilot = data.get("github-copilot")
         if isinstance(copilot, dict):
             return copilot
-    except Exception:
+    except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
         pass
     return None
 
 
-def _read_opencode_auth() -> Optional[str]:
+def _read_opencode_auth() -> str | None:
     copilot = _read_opencode_auth_data()
     if not copilot:
         return None
@@ -197,9 +217,7 @@ def get_oauth_token() -> str:
             _oauth_token_cache = tok
             return tok
 
-        raise CopilotAuthError(
-            "No Copilot OAuth token found."
-        )
+        raise CopilotAuthError("No Copilot OAuth token found.")
 
 
 def _write_opencode_auth_back(copilot_entry: dict) -> None:
@@ -228,7 +246,7 @@ class _ShortLived:
     endpoints_api: str
 
 
-_short_lived: Optional[_ShortLived] = None
+_short_lived: _ShortLived | None = None
 _short_lived_lock = asyncio.Lock()
 
 
@@ -269,22 +287,21 @@ def _valid_endpoint_url(value: object) -> bool:
 async def _fetch_short_lived(oauth: str) -> _ShortLived:
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(
-            _COPILOT_USER_URL, headers=_exchange_token_headers(oauth),
+            _COPILOT_USER_URL,
+            headers=_exchange_token_headers(oauth),
         )
     if r.status_code == 401:
         clear_oauth_cache()
         raise CopilotAuthError(
-            "GitHub returned 401 from /copilot_internal/user — stored OAuth token is invalid or revoked."
+            "GitHub returned 401 from /copilot_internal/user — stored OAuth token is invalid or revoked."  # intentional long protocol text or compatibility message  # noqa: E501
         )
     if r.status_code == 404:
         raise CopilotAuthError(
-            "GitHub returned 404 from /copilot_internal/user — stored OAuth token lacks the required 'copilot' scope. "
+            "GitHub returned 404 from /copilot_internal/user — stored OAuth token lacks the required 'copilot' scope. "  # intentional long protocol text or compatibility message  # noqa: E501
             "Regenerate the token by running a Copilot task in opencode or re-authenticating."
         )
     if r.status_code != 200:
-        raise CopilotAuthError(
-            f"Copilot endpoint discovery failed: {r.status_code}"
-        )
+        raise CopilotAuthError(f"Copilot endpoint discovery failed: {r.status_code}")
     data = r.json()
     endpoints = data.get("endpoints") or {}
     api = endpoints.get("api") if isinstance(endpoints, dict) else None
@@ -331,7 +348,7 @@ async def _get_copilot_token_locked(now: int) -> tuple[str, str]:
                 # Skip gho_/ghu_ tokens — they are OAuth tokens, not session tokens
                 elif access.startswith("gho_") or access.startswith("ghu_"):
                     log.debug(
-                        "copilot: access token starts with gho_/ghu_ (OAuth token, not session), skipping"
+                        "copilot: access token starts with gho_/ghu_ (OAuth token, not session), skipping"  # intentional long protocol text or compatibility message  # noqa: E501
                     )
                 # Allow small negative skew (up to 30s) to handle clock differences
                 elif (expires_sec - now) > -30:
@@ -349,7 +366,8 @@ async def _get_copilot_token_locked(now: int) -> tuple[str, str]:
                 else:
                     log.debug(
                         "copilot: access token expired (%d < %d)",
-                        int(expires_sec), int(now),
+                        int(expires_sec),
+                        int(now),
                     )
             except Exception:
                 log.debug("Failed parsing opencode auth expires")
@@ -386,6 +404,7 @@ async def _get_copilot_token_locked(now: int) -> tuple[str, str]:
     _short_lived = fresh
     log.info(
         "copilot: refreshed short-lived token (expires_at=%d, api=%s)",
-        fresh.expires_at, fresh.endpoints_api,
+        fresh.expires_at,
+        fresh.endpoints_api,
     )
     return fresh.token, fresh.endpoints_api

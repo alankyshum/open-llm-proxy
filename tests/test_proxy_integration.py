@@ -1,14 +1,18 @@
 import os
 import socket
 import time
+from multiprocessing import Process
+
 import httpx
 import pytest
-from multiprocessing import Process
-from open_llm_proxy.server_launcher import launch_server, find_agent_config
+
+from open_llm_proxy.server_launcher import find_agent_config, launch_server
+
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex((host, port)) == 0
+
 
 def wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0) -> bool:
     start_time = time.time()
@@ -17,19 +21,21 @@ def wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0) -> 
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((host, port))
                 return True
-        except socket.error:
+        except OSError:
             time.sleep(0.2)
     return False
 
+
 @pytest.mark.anyio
+@pytest.mark.integration
 async def test_proxy_integration_smoke():
     # Use port 8766 for test to avoid collision with any running main proxy on 8765
     test_port = 8766
-    
+
     # Check if port is already in use
     if is_port_in_use(test_port):
         pytest.skip(f"Port {test_port} is already in use. Skipping integration test.")
-        
+
     # Check if agent-config.yml exists
     config_path = find_agent_config()
     if not config_path.exists():
@@ -37,7 +43,7 @@ async def test_proxy_integration_smoke():
 
     # Start the server in a separate Process
     if "OPENCODE_API_KEY" not in os.environ:
-        os.environ["OPENCODE_API_KEY"] = "sk-opencode-mock-key"
+        os.environ["OPENCODE_API_KEY"] = "DUMMY-NOT-A-SECRET-opencode-key"
 
     proc = Process(
         target=launch_server,
@@ -50,36 +56,35 @@ async def test_proxy_integration_smoke():
         daemon=True,
     )
     proc.start()
-    
+
     try:
         # Wait for the server to bind to the port
         if not wait_for_port(test_port, timeout=60.0):
             pytest.fail("Timeout waiting for proxy server to start.")
-            
+
         # Perform test call to the proxy
         url = f"http://127.0.0.1:{test_port}/v1/chat/completions"
-        headers = {
-            "Authorization": "Bearer sk-local",
-            "Content-Type": "application/json"
-        }
-        
+        headers = {"Authorization": "Bearer sk-local", "Content-Type": "application/json"}
+
         # Use an existing fallback chain from agent-config.yml
         # In our case, [claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]
-        model_name = "[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
-        
+        model_name = (
+            "[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
+        )
+
         payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": "reply pong"}],
-            "stream": False
+            "stream": False,
         }
-        
+
         print(f"Sending POST request to {url} with model {model_name}...")
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(url, json=payload, headers=headers)
                 print(f"Response status code: {response.status_code}")
                 print(f"Response content: {response.text}")
-                
+
                 # Check for 200 OK
                 assert response.status_code == 200
                 data = response.json()

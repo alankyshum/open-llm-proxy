@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -74,7 +73,9 @@ def test_get_api_key_from_credentials_file_json(monkeypatch, tmp_path):
     credentials_dir = fake_home / ".claude"
     credentials_dir.mkdir()
     credentials_json = credentials_dir / ".credentials.json"
-    credentials_json.write_text(json.dumps({"api_key": "sk-ant-credentials-json"}), encoding="utf-8")
+    credentials_json.write_text(
+        json.dumps({"api_key": "sk-ant-credentials-json"}), encoding="utf-8"
+    )
 
     assert creds.get_api_key() == "sk-ant-credentials-json"
 

@@ -5,7 +5,6 @@ from pathlib import Path
 
 from open_llm_proxy import env_creds
 
-
 ENV_KEY = "OPENROUTER_API_KEY"
 
 
@@ -21,7 +20,7 @@ def _resolve_account_key(account: str | None) -> str | None:
             secret = ref.read_bytes()
             if secret and secret.strip():
                 return secret.decode().strip()
-    except Exception:
+    except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
         pass
     return None
 
@@ -40,9 +39,7 @@ def get_persisted_api_key(account: str | None = None) -> str:
         if key:
             return key
         if account != "default":
-            raise RuntimeError(
-                f"OpenRouter account {account!r} has no stored credential"
-            )
+            raise RuntimeError(f"OpenRouter account {account!r} has no stored credential")
     # Fall through to shared env file (None or "default" only)
     key = _read_env_file(ENV_KEY)
     if key and key.strip():
@@ -63,9 +60,7 @@ def get_api_key(account: str | None = None) -> str:
         if key:
             return key
         if account != "default":
-            raise RuntimeError(
-                f"OpenRouter account {account!r} has no stored credential"
-            )
+            raise RuntimeError(f"OpenRouter account {account!r} has no stored credential")
     key = os.environ.get(ENV_KEY)
     if key and key.strip():
         return key.strip()
@@ -87,7 +82,6 @@ def _read_env_file(name: str) -> str | None:
     Ignores the shell environment — purely file-based.
     """
     import shlex
-    from pathlib import Path
 
     env_file = env_creds._env_file()
     if not env_file.is_file():
@@ -98,7 +92,7 @@ def _read_env_file(name: str) -> str | None:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):].strip()
+            line = line[len("export ") :].strip()
         if "=" not in line:
             continue
         key, value = line.split("=", 1)

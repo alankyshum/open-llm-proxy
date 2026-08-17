@@ -10,7 +10,21 @@ name = "open-llm-proxy"
 version = "0.3.1"
 description = "Lightweight litellm Router proxy"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
+keywords = ["llm", "proxy", "litellm", "openai", "anthropic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: Proxy Servers",
+]
 dependencies = [
     "litellm[proxy]",
     "prisma",
@@ -22,12 +36,37 @@ dependencies = [
 [project.scripts]
 open-llm-proxy = "open_llm_proxy.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/alankyshum/open-llm-proxy"
+Issues = "https://github.com/alankyshum/open-llm-proxy/issues"
+
 [project.optional-dependencies]
 dev = [
-    "pytest"
+    "pytest",
+    "ruff"
 ]
 
 [dependency-groups]
 dev = [
     "pytest-asyncio>=1.4.0",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF100"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally contain fixture secrets, temporary paths, broad exception
+# assertions, and long protocol samples; these are not production findings.
+"tests/**" = ["B017", "E501", "S101", "S105", "S106", "S108", "S110"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: tests requiring live network services, credentials, or a database",
 ]

@@ -1,19 +1,18 @@
-import time
-import uuid
 import os
 import re
+import time
+import uuid
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Optional
-
+from typing import Any
 
 ATTRIBUTION_HEADER = "x-open-llm-proxy-attribution-id"
 _SERVED_BY_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,256}$")
 
 
-def get_attribution_token() -> Optional[str]:
+def get_attribution_token() -> str | None:
     """Load dedicated attribution token from env or its mode-0600 file."""
     token = os.environ.get("OPEN_LLM_PROXY_ATTRIBUTION_TOKEN", "").strip()
     if token:
@@ -34,12 +33,13 @@ def get_attribution_token() -> Optional[str]:
         return None
     return token if token and len(token) <= 1024 else None
 
+
 class AttributionStore:
     def __init__(
         self,
         capacity: int = 2048,
         ttl: float = 86400.0,
-        clock: Optional[Callable[[], float]] = None,
+        clock: Callable[[], float] | None = None,
     ):
         if capacity < 1 or ttl <= 0:
             raise ValueError("capacity and ttl must be positive")
@@ -48,7 +48,7 @@ class AttributionStore:
         self.clock = clock or time.monotonic
         self._lock = Lock()
         # UUID -> (latest winner, last announced winner, expiry)
-        self._store: OrderedDict[str, tuple[str, Optional[str], float]] = OrderedDict()
+        self._store: OrderedDict[str, tuple[str, str | None, float]] = OrderedDict()
 
     def set(self, attr_id: str, served_by: str) -> None:
         normalized_id = self._normalize_uuid(attr_id)
@@ -77,7 +77,7 @@ class AttributionStore:
             self._put(normalized_id, served_by, served_by, now)
             return changed
 
-    def get(self, attr_id: str) -> Optional[str]:
+    def get(self, attr_id: str) -> str | None:
         normalized_id = self._normalize_uuid(attr_id)
         if normalized_id is None:
             return None
@@ -92,7 +92,7 @@ class AttributionStore:
             self._store.clear()
 
     @staticmethod
-    def _normalize_uuid(value: object) -> Optional[str]:
+    def _normalize_uuid(value: object) -> str | None:
         if not isinstance(value, str):
             return None
         try:
@@ -102,7 +102,7 @@ class AttributionStore:
         return str(parsed) if value.lower() == str(parsed) else None
 
     @staticmethod
-    def _normalize_served_by(value: object) -> Optional[str]:
+    def _normalize_served_by(value: object) -> str | None:
         if not isinstance(value, str):
             return None
         value = value.strip()
@@ -112,7 +112,7 @@ class AttributionStore:
         self,
         attr_id: str,
         served_by: str,
-        announced: Optional[str],
+        announced: str | None,
         now: float,
     ) -> None:
         self._store[attr_id] = (served_by, announced, now + self.ttl)
@@ -125,7 +125,7 @@ class AttributionStore:
             self._store.pop(key, None)
 
 
-def attribution_id_from_headers(headers: object) -> Optional[str]:
+def attribution_id_from_headers(headers: object) -> str | None:
     if not isinstance(headers, Mapping):
         return None
     for key, value in headers.items():
@@ -134,7 +134,7 @@ def attribution_id_from_headers(headers: object) -> Optional[str]:
     return None
 
 
-def attribution_id_from_data(data: object) -> Optional[str]:
+def attribution_id_from_data(data: object) -> str | None:
     """Find the OpenCode session attribution ID in LiteLLM request metadata."""
     if not isinstance(data, Mapping):
         return None
@@ -158,7 +158,7 @@ def attribution_id_from_data(data: object) -> Optional[str]:
     return None
 
 
-def served_by_from_data(data: object) -> Optional[str]:
+def served_by_from_data(data: object) -> str | None:
     """Extract the concrete deployment key from LiteLLM request metadata."""
     if not isinstance(data, Mapping):
         return None
@@ -176,6 +176,7 @@ def served_by_from_data(data: object) -> Optional[str]:
             if key:
                 return key
     return None
+
 
 # Global store instance
 global_attribution_store = AttributionStore()

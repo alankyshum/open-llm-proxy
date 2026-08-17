@@ -5,22 +5,23 @@ import logging
 import os
 import sqlite3
 import threading
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
 import yaml
-from litellm.integrations.custom_logger import CustomLogger
 from litellm.exceptions import MidStreamFallbackError
+from litellm.integrations.custom_logger import CustomLogger
 
+from open_llm_proxy.config_paths import resolve_config_dir
 from open_llm_proxy.errors import custom_rate_limit_error
 from open_llm_proxy.rate_limit_catalog import (
     DEFAULT_PLANS,
     SOURCE_CHECKED_AT,
-    get_plan_policy,
-    PROVIDER_PLANS,
     PlanPolicy,
+    get_plan_policy,
 )
 
 log = logging.getLogger("open_llm_proxy.rate_limit_state")
@@ -31,22 +32,16 @@ def base_provider(provider: str) -> str:
     return provider.split("@", 1)[0]
 
 
-_DEFAULT_DATABASE_PATH = (
-    Path.home() / ".config" / "open-llm-proxy" / "state.sqlite3"
-)
-
-
 def load_rate_limit_policy_from_data(data: dict[str, Any]) -> dict[str, Any]:
     """Load policy from an already parsed, immutable config snapshot."""
     raw_policy = data.get("rate_limit_policy") or {}
     if not isinstance(raw_policy, dict):
         raise ValueError("rate_limit_policy must be a mapping")
 
+    default_database_path = resolve_config_dir() / "state.sqlite3"
     database_path = Path(
         os.path.expandvars(
-            os.path.expanduser(
-                str(raw_policy.get("database", _DEFAULT_DATABASE_PATH))
-            )
+            os.path.expanduser(str(raw_policy.get("database", default_database_path)))
         )
     )
     plans = raw_policy.get("plans") or {}
@@ -161,7 +156,7 @@ class RateLimitStore:
             db_rows = connection.execute(
                 "SELECT provider, model FROM models ORDER BY provider, model"
             ).fetchall()
-        
+
         results = []
         for row in db_rows:
             provider = row["provider"]
@@ -169,8 +164,20 @@ class RateLimitStore:
             try:
                 plan_name, policy = self._resolve(provider)
             except ValueError:
-                plan_name, label, default_cooldown_seconds, quota_limited, limits_json, source_url = (
-                    None, None, None, None, None, None
+                (
+                    plan_name,
+                    label,
+                    default_cooldown_seconds,
+                    quota_limited,
+                    limits_json,
+                    source_url,
+                ) = (  # intentional long protocol text or compatibility message
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                 )
             else:
                 label = policy.label
@@ -178,18 +185,20 @@ class RateLimitStore:
                 quota_limited = int(policy.quota_limited)
                 limits_json = json.dumps(policy.limits, sort_keys=True)
                 source_url = policy.source_url
-            
-            results.append({
-                "provider": provider,
-                "model": model,
-                "plan": plan_name,
-                "label": label,
-                "default_cooldown_seconds": default_cooldown_seconds,
-                "quota_limited": quota_limited,
-                "limits_json": limits_json,
-                "source_url": source_url,
-                "source_checked_at": SOURCE_CHECKED_AT,
-            })
+
+            results.append(
+                {
+                    "provider": provider,
+                    "model": model,
+                    "plan": plan_name,
+                    "label": label,
+                    "default_cooldown_seconds": default_cooldown_seconds,
+                    "quota_limited": quota_limited,
+                    "limits_json": limits_json,
+                    "source_url": source_url,
+                    "source_checked_at": SOURCE_CHECKED_AT,
+                }
+            )
         return results
 
     def ensure_default_plan(self, provider: str) -> tuple[str, PlanPolicy]:
@@ -206,9 +215,7 @@ class RateLimitStore:
         provider, model = key.split("/", 1)
         plan_name, policy = self.ensure_default_plan(provider)
         if retry_at is None:
-            retry_at = occurred_at + timedelta(
-                seconds=policy.default_cooldown_seconds
-            )
+            retry_at = occurred_at + timedelta(seconds=policy.default_cooldown_seconds)
             retry_source = f"plan:{plan_name}"
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -242,9 +249,7 @@ class RateLimitStore:
             ).fetchone()
         return _parse_timestamp(row["retry_at"]) if row is not None else None
 
-    def active_rate_limit(
-        self, key: str, now: datetime
-    ) -> tuple[datetime, str] | None:
+    def active_rate_limit(self, key: str, now: datetime) -> tuple[datetime, str] | None:
         provider, model = key.split("/", 1)
         with self._lock, self._connect() as connection:
             row = connection.execute(
@@ -296,15 +301,11 @@ def _is_rate_limit_error(exception: Any) -> bool:
     status_code = getattr(exception, "status_code", None)
     if status_code == 429 or str(status_code) == "429":
         return True
-    response_status = getattr(
-        getattr(exception, "response", None), "status_code", None
-    )
+    response_status = getattr(getattr(exception, "response", None), "status_code", None)
     return response_status == 429 or str(response_status) == "429"
 
 
-def _rate_limit_key_for_exception(
-    exception: Any, metadata_key: Any
-) -> str | None:
+def _rate_limit_key_for_exception(exception: Any, metadata_key: Any) -> str | None:
     origin_key = getattr(exception, "rate_limit_origin_key", None)
     if isinstance(origin_key, str) and "/" in origin_key:
         return origin_key
@@ -334,9 +335,7 @@ def _headers_from_exception(exception: Any) -> dict[str, str]:
         ]
         for candidate in candidates:
             if isinstance(candidate, Mapping):
-                headers.update(
-                    {str(key).lower(): str(value) for key, value in candidate.items()}
-                )
+                headers.update({str(key).lower(): str(value) for key, value in candidate.items()})
     return headers
 
 
@@ -366,15 +365,11 @@ def _reset_timestamp(value: str, now: datetime) -> datetime | None:
     return now + timedelta(seconds=max(0, number))
 
 
-def retry_at_from_exception(
-    exception: Any, now: datetime
-) -> tuple[datetime | None, str | None]:
+def retry_at_from_exception(exception: Any, now: datetime) -> tuple[datetime | None, str | None]:
     candidates: list[tuple[datetime, str]] = []
     retry_after = getattr(exception, "retry_after", None)
     if isinstance(retry_after, (int, float)) and not isinstance(retry_after, bool):
-        candidates.append(
-            (now + timedelta(seconds=max(0, retry_after)), "retry_after")
-        )
+        candidates.append((now + timedelta(seconds=max(0, retry_after)), "retry_after"))
 
     headers: dict[str, str] = {}
     for candidate in (
@@ -382,9 +377,7 @@ def retry_at_from_exception(
         getattr(getattr(exception, "response", None), "headers", None),
     ):
         if isinstance(candidate, Mapping):
-            headers.update(
-                {str(key).lower(): str(value) for key, value in candidate.items()}
-            )
+            headers.update({str(key).lower(): str(value) for key, value in candidate.items()})
     if "retry-after" in headers:
         timestamp = _retry_after_timestamp(headers["retry-after"], now)
         if timestamp is not None:
@@ -451,9 +444,7 @@ class PersistentRateLimitCallback(CustomLogger):
             return
         litellm_params = kwargs.get("litellm_params") or {}
         model_info = litellm_params.get("model_info") or {}
-        metadata_key = (
-            model_info.get("rate_limit_key") if isinstance(model_info, dict) else None
-        )
+        metadata_key = model_info.get("rate_limit_key") if isinstance(model_info, dict) else None
         key = _rate_limit_key_for_exception(exception, metadata_key)
         if key is None:
             return

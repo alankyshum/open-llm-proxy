@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -53,7 +54,11 @@ def _headers(key: str) -> dict[str, str]:
     return headers
 
 
-async def stream_messages(payload: dict[str, Any], *, account: str | None = None) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+async def stream_messages(
+    payload: dict[str, Any], *, account: str | None = None
+) -> AsyncIterator[
+    tuple[str, dict[str, Any]]
+]:  # intentional long protocol text or compatibility message
     client = _get_client()
     attempts = 2
     for attempt in range(attempts):
@@ -95,12 +100,12 @@ async def stream_messages(payload: dict[str, Any], *, account: str | None = None
                 if line.startswith(":"):
                     continue
                 if line.startswith("event:"):
-                    current_event = line[len("event:"):].strip()
+                    current_event = line[len("event:") :].strip()
                     continue
                 if line.startswith("data:"):
                     if current_event in ("ping", None):
                         continue
-                    payload_str = line[len("data:"):].strip()
+                    payload_str = line[len("data:") :].strip()
                     if not payload_str:
                         continue
                     try:

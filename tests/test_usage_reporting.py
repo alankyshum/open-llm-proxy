@@ -1,15 +1,16 @@
-import pytest
 from datetime import datetime, timezone
-from fastapi import FastAPI, APIRouter
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, AsyncMock, patch
 
 from open_llm_proxy.usage_reporting import (
-    format_display_model,
-    format_date,
     aggregate_and_normalize_spend_logs,
+    format_date,
+    format_display_model,
     install_usage_reporting,
 )
+
 
 def test_format_display_model():
     # Model starting with provider
@@ -20,6 +21,7 @@ def test_format_display_model():
     # Edge cases
     assert format_display_model("", "github") == ""
     assert format_display_model("gh-gemini", "") == "gh-gemini"
+
 
 def test_format_date():
     # Datetime object
@@ -35,6 +37,7 @@ def test_format_date():
 
     # Unknown format
     assert format_date("invalid-date") == "invalid-date"
+
 
 def test_aggregate_and_normalize_spend_logs():
     db_rows = [
@@ -71,7 +74,7 @@ def test_aggregate_and_normalize_spend_logs():
 
     # Top 10 sorting by sum_total_tokens desc: anthropic/claude-3 has 1500, openai/gpt-4 has 450
     assert len(result) == 2
-    
+
     first = result[0]
     assert first["model"] == "anthropic/claude-3"
     assert first["provider"] == "anthropic"
@@ -104,6 +107,7 @@ def test_aggregate_and_normalize_spend_logs():
         "total_tokens": 450,
     }
 
+
 def test_install_usage_reporting_removes_and_replaces():
     app = FastAPI()
     router = APIRouter()
@@ -124,9 +128,10 @@ def test_install_usage_reporting_removes_and_replaces():
     mock_auth_dict.user_id = "test-user"
 
     # Install usage reporting override
-    with patch("open_llm_proxy.usage_reporting.user_api_key_auth", lambda: mock_auth_dict), \
-         patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma:
-        
+    with (
+        patch("open_llm_proxy.usage_reporting.user_api_key_auth", lambda: mock_auth_dict),
+        patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma,
+    ):
         # Setup mock database response
         mock_db = AsyncMock()
         mock_db.query_raw.return_value = [
@@ -148,11 +153,12 @@ def test_install_usage_reporting_removes_and_replaces():
         client = TestClient(app)
         resp = client.get("/global/activity/model?start_date=2026-07-01&end_date=2026-07-10")
         assert resp.status_code == 200
-        
+
         data = resp.json()
         assert len(data) == 1
         assert data[0]["model"] == "openai/gpt-4"
         assert data[0]["sum_total_tokens"] == 15
+
 
 def test_aggregate_does_not_collapse_different_years():
     # Two dates with same %b %d but different years
@@ -187,22 +193,26 @@ def test_aggregate_does_not_collapse_different_years():
     assert daily_data[1]["date"] == "Jul 10"
     assert daily_data[1]["total_tokens"] == 300
 
+
 def test_install_usage_reporting_exception_leakage_prevention():
     app = FastAPI()
     router = APIRouter()
+
     @router.get("/global/activity/model")
     def original_endpoint():
         return "original"
+
     app.include_router(router)
 
     mock_auth_dict = MagicMock()
     mock_auth_dict.user_role = "admin"
     mock_auth_dict.user_id = "test-user"
 
-    with patch("open_llm_proxy.usage_reporting.user_api_key_auth", lambda: mock_auth_dict), \
-         patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma, \
-         patch("open_llm_proxy.usage_reporting.logging.getLogger") as mock_get_logger:
-        
+    with (
+        patch("open_llm_proxy.usage_reporting.user_api_key_auth", lambda: mock_auth_dict),
+        patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma,
+        patch("open_llm_proxy.usage_reporting.logging.getLogger") as mock_get_logger,
+    ):
         mock_logger = MagicMock()
         mock_get_logger.return_value = mock_logger
 

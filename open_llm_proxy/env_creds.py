@@ -30,7 +30,7 @@ def get_env_key(name: str) -> str | None:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):].strip()
+            line = line[len("export ") :].strip()
         if "=" not in line:
             continue
         key, value = line.split("=", 1)
@@ -58,9 +58,7 @@ def set_env_key(name: str, value: str) -> None:
     try:
         os.chmod(str(env_file.parent), 0o700)
     except OSError as e:
-        raise RuntimeError(
-            f"Failed to set permissions on config directory: {e}"
-        ) from e
+        raise RuntimeError(f"Failed to set permissions on config directory: {e}") from e
 
     quoted_value = shlex.quote(value)
     new_line = f"{name}={quoted_value}"
@@ -76,7 +74,7 @@ def set_env_key(name: str, value: str) -> None:
             if not stripped.startswith("#"):
                 temp_line = stripped
                 if temp_line.startswith("export "):
-                    temp_line = temp_line[len("export "):].strip()
+                    temp_line = temp_line[len("export ") :].strip()
                 if temp_line.startswith(f"{name}="):
                     is_target = True
 
@@ -101,13 +99,11 @@ def set_env_key(name: str, value: str) -> None:
         try:
             os.chmod(str(env_file), 0o600)
         except OSError as e:
-            raise RuntimeError(
-                f"Failed to set permissions on env file: {e}"
-            ) from e
+            raise RuntimeError(f"Failed to set permissions on env file: {e}") from e
     except Exception as e:
         if temp_path.exists():
             try:
                 temp_path.unlink()
-            except Exception:
+            except Exception:  # intentional best-effort fallback or cleanup  # noqa: S110
                 pass
         raise e

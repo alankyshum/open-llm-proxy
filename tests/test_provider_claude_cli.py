@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import litellm
 import pytest
@@ -26,6 +25,7 @@ has_creds = resolve_key() is not None
 
 # 1. Offline unit tests with mocked anthropic_client
 
+
 async def mock_stream_messages_success(*args, **kwargs):
     yield "message_start", {"message": {"usage": {"input_tokens": 10}}}
     yield "content_block_start", {"index": 0, "content_block": {"type": "text", "text": ""}}
@@ -36,7 +36,9 @@ async def mock_stream_messages_success(*args, **kwargs):
 
 @pytest.mark.anyio
 async def test_claude_cli_streaming_success():
-    with patch.object(anthropic_client, "stream_messages", side_effect=mock_stream_messages_success):
+    with patch.object(
+        anthropic_client, "stream_messages", side_effect=mock_stream_messages_success
+    ):
         chunks = []
         async for chunk in claude_cli_handler.astreaming(
             model="claude-cli/claude-sonnet-5",
@@ -76,10 +78,7 @@ async def test_claude_cli_rate_limit_error_mapping():
         assert exc_info.value.status_code == 429
         assert "Mocked Rate Limit" in exc_info.value.message
         assert exc_info.value.retry_after == 5
-        assert (
-            exc_info.value.rate_limit_origin_key
-            == "claude-cli/claude-sonnet-5"
-        )
+        assert exc_info.value.rate_limit_origin_key == "claude-cli/claude-sonnet-5"
 
 
 @pytest.mark.anyio
@@ -110,26 +109,29 @@ async def test_claude_cli_completion_success():
 
 # 2. Offline 429 -> fallback Router test (Encoding 1)
 
+
 class MockFallbackLLM(litellm.CustomLLM):
     def completion(self, *args, **kwargs):
         return ModelResponse(
-            choices=[{
-                "finish_reason": "stop",
-                "index": 0,
-                "message": {"role": "assistant", "content": "fallback-ok"}
-            }]
+            choices=[
+                {
+                    "finish_reason": "stop",
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "fallback-ok"},
+                }
+            ]
         )
 
 
 @pytest.mark.anyio
 async def test_router_429_fallback():
     from litellm.utils import custom_llm_setup
+
     # Register our mock fallback provider
     if not any(item.get("provider") == "mock-fallback" for item in litellm.custom_provider_map):
-        litellm.custom_provider_map.append({
-            "provider": "mock-fallback",
-            "custom_handler": MockFallbackLLM()
-        })
+        litellm.custom_provider_map.append(
+            {"provider": "mock-fallback", "custom_handler": MockFallbackLLM()}
+        )
     custom_llm_setup()
 
     bracket_alias = "open-llm-proxy/[claude-cli/claude-sonnet-5,mock-fallback/model]"
@@ -138,23 +140,24 @@ async def test_router_429_fallback():
             "model_name": bracket_alias,
             "litellm_params": {
                 "model": "claude-cli/claude-sonnet-5",
-            }
+            },
         },
         {
             "model_name": "fallback-model",
             "litellm_params": {
                 "model": "mock-fallback/model",
-            }
-        }
+            },
+        },
     ]
 
-    router = Router(
-        model_list=model_list,
-        fallbacks=[{bracket_alias: ["fallback-model"]}]
-    )
+    router = Router(model_list=model_list, fallbacks=[{bracket_alias: ["fallback-model"]}])
 
     # Mock send_messages to raise RateLimitError
-    with patch.object(anthropic_client, "send_messages", side_effect=RateLimitError("Mocked Rate Limit", retry_after=5)):
+    with patch.object(
+        anthropic_client,
+        "send_messages",
+        side_effect=RateLimitError("Mocked Rate Limit", retry_after=5),
+    ):
         res = router.completion(
             model=bracket_alias,
             messages=[{"role": "user", "content": "hello"}],
@@ -164,7 +167,10 @@ async def test_router_429_fallback():
 
 # 3. Live registration tests (skippable)
 
-@pytest.mark.skipif(not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain")
+
+@pytest.mark.skipif(
+    not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain"
+)
 def test_live_registration_completion():
     res = litellm.completion(
         model="claude-cli/claude-sonnet-5",
@@ -175,7 +181,9 @@ def test_live_registration_completion():
     assert "pong" in text
 
 
-@pytest.mark.skipif(not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain")
+@pytest.mark.skipif(
+    not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain"
+)
 def test_live_registration_streaming():
     res = litellm.completion(
         model="claude-cli/claude-sonnet-5",
