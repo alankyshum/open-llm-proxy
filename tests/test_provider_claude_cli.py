@@ -168,6 +168,7 @@ async def test_router_429_fallback():
 # 3. Live registration tests (skippable)
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(
     not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain"
 )
@@ -181,6 +182,7 @@ def test_live_registration_completion():
     assert "pong" in text
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(
     not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain"
 )

@@ -16,6 +16,7 @@ def resolve_key():
 has_creds = resolve_key() is not None
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(
     not has_creds, reason="No Claude Code/anthropic creds found in environment or Keychain"
 )

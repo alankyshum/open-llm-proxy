@@ -626,6 +626,7 @@ async def test_chat_stream_non_200_exact_4096_boundary(monkeypatch):
 # ── LIVE SHIELDED COMPLETION TESTS ───────────────────────────────────────────
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(
     not has_copilot, reason="No GitHub Copilot credentials resolved on this machine"
 )
