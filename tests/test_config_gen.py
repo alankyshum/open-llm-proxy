@@ -10,6 +10,11 @@ from open_llm_proxy.config_gen import (
 )
 
 
+@pytest.fixture(autouse=True)
+def provide_dummy_openrouter_key(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "DUMMY-NOT-A-SECRET-openrouter-key")
+
+
 def test_configured_model_tokens(tmp_path):
     config_file = tmp_path / "agent-config.yml"
     config_file.write_text(

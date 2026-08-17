@@ -1,6 +1,16 @@
 import subprocess
 
+import pytest
+
 from open_llm_proxy import cli
+
+
+@pytest.fixture(autouse=True)
+def stub_legacy_credential_migration(monkeypatch):
+    monkeypatch.setattr(
+        "open_llm_proxy.auth_migration.migrate_legacy_credentials",
+        lambda: [],
+    )
 
 
 def test_status_requires_http_readiness(monkeypatch, capsys):
@@ -101,12 +111,14 @@ def test_config_prints_generated_json(monkeypatch, tmp_path, capsys):
 
 
 def test_config_reports_generation_error(monkeypatch, capsys):
+    config_path = "agent-config.yml"
+
     def fail(_path):
         raise ValueError("bad config")
 
     monkeypatch.setattr("open_llm_proxy.config_gen.generate_config", fail)
 
-    assert cli.main(["config"]) == 1
+    assert cli.main(["config", "--config", config_path]) == 1
     assert capsys.readouterr().err == "Error: bad config\n"
 
 

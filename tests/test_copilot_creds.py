@@ -47,7 +47,10 @@ async def test_endpoint_discovery_invalid_endpoint_falls_back(
 
 
 @pytest.fixture(autouse=True)
-def clean_copilot_cache():
+def clean_copilot_cache(monkeypatch):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("OPEN_LLM_PROXY_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("OLP_CONFIG_DIR", raising=False)
     copilot_creds.clear_oauth_cache()
     copilot_creds.invalidate_short_lived()
     yield

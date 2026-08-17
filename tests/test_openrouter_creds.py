@@ -11,6 +11,13 @@ from open_llm_proxy.openrouter_creds import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_config_environment(monkeypatch):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("OPEN_LLM_PROXY_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("OLP_CONFIG_DIR", raising=False)
+
+
 def test_get_api_key_from_env(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-env123")
     assert get_api_key() == "sk-or-env123"
