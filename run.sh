@@ -14,8 +14,8 @@ if [ -f "$ENV_FILE" ]; then
   done < "$ENV_FILE"
 fi
 
-# Localhost is the safe default. Set OPEN_LLM_PROXY_HOST explicitly for remote access.
-OPEN_LLM_PROXY_HOST="${OPEN_LLM_PROXY_HOST:-127.0.0.1}"
+# The proxy is intentionally loopback-only; Tailscale Serve is the external path.
+OPEN_LLM_PROXY_HOST="127.0.0.1"
 
 echo "================================================================="
 echo "open-llm-proxy — LiteLLM Router-based local proxy"
