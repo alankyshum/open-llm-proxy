@@ -242,11 +242,34 @@ def copilot_chat_to_responses(body: dict[str, Any]) -> dict[str, Any]:
             "stream",
             "tools",
             "tool_choice",
+            "response_format",
+            "reasoning_effort",
         )
     }
 
     if "model" in body:
         res["model"] = body["model"]
+
+    # The Responses API nests structured output under ``text.format`` rather
+    # than accepting Chat Completions' top-level ``response_format``.
+    response_format = body.get("response_format")
+    if isinstance(response_format, dict):
+        if response_format.get("type") == "json_schema":
+            schema = response_format.get("json_schema")
+            if isinstance(schema, dict):
+                res["text"] = {
+                    "format": {
+                        "type": "json_schema",
+                        "name": schema.get("name"),
+                        "strict": schema.get("strict", True),
+                        "schema": schema.get("schema"),
+                    }
+                }
+        else:
+            res["text"] = {"format": response_format}
+    reasoning_effort = body.get("reasoning_effort")
+    if isinstance(reasoning_effort, str):
+        res["reasoning"] = {"effort": reasoning_effort}
 
     if "tools" in body:
         res_tools = []
@@ -599,6 +622,8 @@ class GithubCopilotLLM(CustomLLM):
         tools = kwargs.get("tools") or optional_params.get("tools")
         max_tokens = kwargs.get("max_tokens") or optional_params.get("max_tokens")
         temperature = kwargs.get("temperature") or optional_params.get("temperature")
+        response_format = kwargs.get("response_format") or optional_params.get("response_format")
+        reasoning_effort = kwargs.get("reasoning_effort") or optional_params.get("reasoning_effort")
 
         model_str = self._strip_model_prefix(model)
 
@@ -619,8 +644,13 @@ class GithubCopilotLLM(CustomLLM):
             body["tools"] = _normalize_tools_for_copilot(tools)
         if max_tokens:
             body["max_tokens"] = max_tokens
-        if temperature is not None:
+        # GPT-5.6 Copilot models reject temperature; keep it for older models.
+        if temperature is not None and not model_str.startswith("gpt-5.6"):
             body["temperature"] = temperature
+        if response_format is not None:
+            body["response_format"] = response_format
+        if reasoning_effort is not None:
+            body["reasoning_effort"] = reasoning_effort
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -814,6 +844,8 @@ class GithubCopilotLLM(CustomLLM):
         tools = kwargs.get("tools") or optional_params.get("tools")
         max_tokens = kwargs.get("max_tokens") or optional_params.get("max_tokens")
         temperature = kwargs.get("temperature") or optional_params.get("temperature")
+        response_format = kwargs.get("response_format") or optional_params.get("response_format")
+        reasoning_effort = kwargs.get("reasoning_effort") or optional_params.get("reasoning_effort")
 
         model_str = self._strip_model_prefix(model)
 
@@ -834,8 +866,13 @@ class GithubCopilotLLM(CustomLLM):
             body["tools"] = _normalize_tools_for_copilot(tools)
         if max_tokens:
             body["max_tokens"] = max_tokens
-        if temperature is not None:
+        # GPT-5.6 Copilot models reject temperature; keep it for older models.
+        if temperature is not None and not model_str.startswith("gpt-5.6"):
             body["temperature"] = temperature
+        if response_format is not None:
+            body["response_format"] = response_format
+        if reasoning_effort is not None:
+            body["reasoning_effort"] = reasoning_effort
 
         headers = {
             "Authorization": f"Bearer {token}",
