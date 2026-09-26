@@ -163,7 +163,7 @@ def test_models_lists_filtered_provider_catalog(monkeypatch, capsys):
             stdout=(
                 "openrouter/moonshotai/kimi-k2.6\n"
                 "openrouter/moonshotai/kimi-k2.7-code\n"
-                "openrouter/z-ai/glm-5.2\n"
+                "openrouter/z-ai/glm-5.3\n"
             ),
             stderr="",
         )

@@ -67,9 +67,9 @@ async def test_proxy_integration_smoke():
         headers = {"Authorization": "Bearer sk-local", "Content-Type": "application/json"}
 
         # Use an existing fallback chain from agent-config.yml
-        # In our case, [claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]
+        # In our case, [claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.3]
         model_name = (
-            "[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.2]"
+            "[claude-cli/claude-sonnet-5,github-copilot/claude-sonnet-5,openrouter/z-ai/glm-5.3]"
         )
 
         payload = {

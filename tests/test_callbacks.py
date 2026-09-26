@@ -174,17 +174,17 @@ async def test_big_pickle_thinking_budget_callback():
 async def test_glm5_2_thinking_budget_callback():
     callback = GeminiThinkingBudgetCallback()
 
-    data = {"model": "openrouter/z-ai/glm-5.2", "max_tokens": 16}
+    data = {"model": "openrouter/z-ai/glm-5.3", "max_tokens": 16}
     res = await callback.async_pre_call_hook(None, None, data, "completion")
     assert res is not None
     assert res["max_tokens"] == 4096
 
-    data_large = {"model": "openrouter/z-ai/glm-5.2", "max_tokens": 8192}
+    data_large = {"model": "openrouter/z-ai/glm-5.3", "max_tokens": 8192}
     res_large = await callback.async_pre_call_hook(None, None, data_large, "completion")
     assert res_large is None
     assert data_large["max_tokens"] == 8192
 
-    data_absent = {"model": "z-ai/glm-5.2"}
+    data_absent = {"model": "z-ai/glm-5.3"}
     res_absent = await callback.async_pre_call_hook(None, None, data_absent, "completion")
     assert res_absent is not None
     assert res_absent["max_tokens"] == 4096
